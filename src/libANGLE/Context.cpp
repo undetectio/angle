@@ -20,6 +20,7 @@
 #include "common/matrix_utils.h"
 #include "common/platform.h"
 #include "common/utilities.h"
+#include "common/system_utils.h"
 #include "libANGLE/Buffer.h"
 #include "libANGLE/Compiler.h"
 #include "libANGLE/Display.h"
@@ -3079,6 +3080,10 @@ void Context::programParameteri(ShaderProgramID program, GLenum pname, GLint val
 
 void Context::initRendererString()
 {
+    if (!angle::GetEnvironmentVar("ANGLE_RENDERER").empty()) {
+        mRendererString = MakeStaticString(angle::GetEnvironmentVar("ANGLE_RENDERER").c_str());
+	return;
+    }
     std::ostringstream frontendRendererString;
     std::string vendorString(mDisplay->getImplementation()->getVendorString());
     std::string rendererString(mImplementation->getRendererDescription());
@@ -3106,29 +3111,37 @@ void Context::initVersionStrings()
 {
     const Version &clientVersion = getClientVersion();
 
-    std::ostringstream versionString;
-    if (getClientType() == EGL_OPENGL_ES_API)
-    {
-        versionString << "OpenGL ES ";
+    if (!angle::GetEnvironmentVar("ANGLE_VERSION").empty()) {
+        mVersionString = MakeStaticString(angle::GetEnvironmentVar("ANGLE_VERSION").c_str());
+    } else {
+        std::ostringstream versionString;
+        if (getClientType() == EGL_OPENGL_ES_API)
+        {
+            versionString << "OpenGL ES ";
+        }
+        versionString << clientVersion.major << "." << clientVersion.minor << ".0 (ANGLE "
+                      << ANGLE_VERSION_STRING << ")";
+        mVersionString = MakeStaticString(versionString.str());
     }
-    versionString << clientVersion.major << "." << clientVersion.minor << ".0 (ANGLE "
-                  << ANGLE_VERSION_STRING << ")";
-    mVersionString = MakeStaticString(versionString.str());
 
-    std::ostringstream shadingLanguageVersionString;
-    if (getClientType() == EGL_OPENGL_ES_API)
-    {
-        shadingLanguageVersionString << "OpenGL ES GLSL ES ";
+    if (!angle::GetEnvironmentVar("ANGLE_SHADING_VERSION").empty()) {
+        mShadingLanguageString = MakeStaticString(angle::GetEnvironmentVar("ANGLE_SHADING_VERSION").c_str());
+    } else {
+        std::ostringstream shadingLanguageVersionString;
+        if (getClientType() == EGL_OPENGL_ES_API)
+        {
+            shadingLanguageVersionString << "OpenGL ES GLSL ES ";
+        }
+        else
+        {
+            ASSERT(getClientType() == EGL_OPENGL_API);
+            shadingLanguageVersionString << "OpenGL GLSL ";
+        }
+        shadingLanguageVersionString << (clientVersion.major == 2 ? 1 : clientVersion.major) << "."
+                                     << clientVersion.minor << "0 (ANGLE " << ANGLE_VERSION_STRING
+                                     << ")";
+        mShadingLanguageString = MakeStaticString(shadingLanguageVersionString.str());
     }
-    else
-    {
-        ASSERT(getClientType() == EGL_OPENGL_API);
-        shadingLanguageVersionString << "OpenGL GLSL ";
-    }
-    shadingLanguageVersionString << (clientVersion.major == 2 ? 1 : clientVersion.major) << "."
-                                 << clientVersion.minor << "0 (ANGLE " << ANGLE_VERSION_STRING
-                                 << ")";
-    mShadingLanguageString = MakeStaticString(shadingLanguageVersionString.str());
 }
 
 void Context::initExtensionStrings()

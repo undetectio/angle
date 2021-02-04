@@ -1809,6 +1809,10 @@ bool Display::isValidNativeDisplay(EGLNativeDisplayType display)
 
 void Display::initVendorString()
 {
+    if (!angle::GetEnvironmentVar("ANGLE_VENDOR").empty()) {
+        mVendorString = MakeStaticString(angle::GetEnvironmentVar("ANGLE_VENDOR").c_str());
+        return;
+    }
     mVendorString                = "Google Inc.";
     std::string vendorStringImpl = mImplementation->getVendorString();
     if (!vendorStringImpl.empty())
