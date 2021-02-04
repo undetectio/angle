@@ -15,7 +15,7 @@ jobs:
       -
         name: Build
         run: |
-          git checkout https://chromium.googlesource.com/chromium/tools/depot_tools.git --depth 1
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git --depth 1
           export PATH=$(pwd)/depot-tools:$PATH
           python scripts/bootstrap.py
           gclient sync
