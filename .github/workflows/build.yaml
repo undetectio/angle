@@ -21,11 +21,14 @@ jobs:
           gclient sync
           ./build/install-build-deps.sh
           gn gen out/Release
-          echo "is_debug = false\ndcheck_always_on = false" >> out/Release/args.gn
+          echo "is_debug = false" >> out/Release/args.gn
+          echo "dcheck_always_on = false" >> out/Release/args.gn
           autoninja -C out/Release
       -
         name: Upload artifact
         uses: actions/upload-artifact@v2
         with:
           name: libs-linux
-          path: out/Release/lib*.so
+          path: |
+            out/Release/libEGL.so
+            out/Release/libGLESv2.so
