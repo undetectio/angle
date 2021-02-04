@@ -13,14 +13,9 @@ jobs:
         name: Checkout
         uses: actions/checkout@v2
       -
-        name: Checkout depot tools
-        uses: actions/checkout@v2
-        with:
-          repository: https://chromium.googlesource.com/chromium/tools/depot_tools.git
-          path: depot-tools
-      -
         name: Build
         run:
+          git checkout https://chromium.googlesource.com/chromium/tools/depot_tools.git --depth 1
           export PATH=$(pwd)/depot-tools:$PATH
           python scripts/bootstrap.py
           gclient sync
