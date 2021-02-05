@@ -5,30 +5,68 @@ on:
     branches: master
 
 jobs:
-  ubuntu:
+  build:
     name: Build on Ubuntu
-    runs-on: ubuntu-latest
+    strategy:
+        matrix:
+          os:
+          - ubuntu-latest
+          - windows-latest
+          - macOS-latest
+    runs-on: ${{ matrix.os }}
     steps:
       -
         name: Checkout
         uses: actions/checkout@v2
       -
-        name: Build
+        name: Build Linux/macOS
+        if: !startsWith(matrix.os, 'windows')
+        shell: bash
         run: |
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git --depth 1
           export PATH=$(pwd)/depot_tools:$PATH
           python scripts/bootstrap.py
           gclient sync
           ./build/install-build-deps.sh
-          gn gen out/Release
-          echo "is_debug = false" >> out/Release/args.gn
-          echo "dcheck_always_on = false" >> out/Release/args.gn
+          gn gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"x64\""
           autoninja -C out/Release
       -
-        name: Upload artifact
+        name: Build Windows
+        if: startsWith(matrix.os, 'windows')
+        shell: bash
+        run: |
+          export DEPOT_TOOLS_WIN_TOOLCHAIN=0
+          curl -fsSL -o depot_tools.zip https://storage.googleapis.com/chrome-infra/depot_tools.zip
+          7z x depot_tools.zip -odepot_tools
+          export PATH=$(pwd)/depot_tools:$PATH
+          python.bat scripts/bootstrap.py
+          gclient.bat sync
+          gn.bat gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"x64\"" # maybe add: target_os=\"winuwp\"
+          autoninja.bat -C out/Release
+      -
+        name: Upload artifact on Linux
+        if: startsWith(matrix.os, 'ubuntu')
         uses: actions/upload-artifact@v2
         with:
           name: libs-linux
           path: |
             out/Release/libEGL.so
             out/Release/libGLESv2.so
+      -
+        name: Upload artifact on macOS
+        if: startsWith(matrix.os, 'macOS')
+        uses: actions/upload-artifact@v2
+        with:
+          name: libs-macos
+          path: |
+            out/Release/libEGL.dylib
+            out/Release/libGLESv2.dylib
+      -
+        name: Upload artifact on Windows
+        if: startsWith(matrix.os, 'windows')
+        uses: actions/upload-artifact@v2
+        with:
+          name: libs-windows
+          path: |
+            out/Release/libEGL.dll
+            out/Release/libGLESv2.dll
