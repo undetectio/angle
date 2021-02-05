@@ -12,7 +12,7 @@ jobs:
           - ubuntu-latest
           - windows-latest
           - macOS-latest
-    name: Build on ${{ runner.os }}
+    name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     steps:
       -
