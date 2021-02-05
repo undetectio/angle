@@ -11,7 +11,7 @@ jobs:
           os:
           - ubuntu-latest
           - windows-latest
-          - macOS-latest
+          #- macOS-latest # weird issues with missing lsb_release
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     steps:
