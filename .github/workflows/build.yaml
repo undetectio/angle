@@ -45,7 +45,7 @@ jobs:
           curl -fsSL -o depot_tools.zip https://storage.googleapis.com/chrome-infra/depot_tools.zip
           7z x depot_tools.zip -odepot_tools
           export PATH=$(pwd)/depot_tools:$PATH
-          python.bat scripts/bootstrap.py
+          python scripts/bootstrap.py
           gclient.bat sync
           gn.bat gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"x64\"" # maybe add: target_os=\"winuwp\"
           autoninja.bat -C out/Release
