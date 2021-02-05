@@ -20,7 +20,8 @@ jobs:
         uses: actions/checkout@v2
       -
         name: Build Linux/macOS
-        if: !startsWith(matrix.os, 'windows')
+        if: |
+          !startsWith(matrix.os, 'windows')
         shell: bash
         run: |
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git --depth 1
