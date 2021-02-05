@@ -11,7 +11,7 @@ jobs:
           os:
           - ubuntu-latest
           - windows-latest
-          #- macOS-latest # weird issues with missing lsb_release
+          - macOS-latest
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     steps:
@@ -33,7 +33,7 @@ jobs:
           export PATH=$(pwd)/depot_tools:$PATH
           python scripts/bootstrap.py
           gclient sync
-          ./build/install-build-deps.sh
+          [[ "$OSTYPE" == "linux-gnu"* ]] && ./build/install-build-deps.sh # Run on Linux only
           gn gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"x64\""
           autoninja -C out/Release
       -
