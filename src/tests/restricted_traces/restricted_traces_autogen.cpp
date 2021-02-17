@@ -15,19 +15,25 @@
 #include "arena_of_valor/arena_of_valor_capture_context1.h"
 #include "asphalt_8/asphalt_8_capture_context2.h"
 #include "brawl_stars/brawl_stars_capture_context1.h"
+#include "bus_simulator_indonesia/bus_simulator_indonesia_capture_context1.h"
 #include "candy_crush_500/candy_crush_500_capture_context1.h"
 #include "clash_of_clans/clash_of_clans_capture_context1.h"
+#include "clash_royale/clash_royale_capture_context2.h"
 #include "cod_mobile/cod_mobile_capture_context1.h"
+#include "coin_master/coin_master_capture_context2.h"
 #include "dragon_ball_legends/dragon_ball_legends_capture_context1.h"
 #include "efootball_pes_2021/efootball_pes_2021_capture_context7.h"
 #include "egypt_1500/egypt_1500_capture_context1.h"
 #include "eight_ball_pool/eight_ball_pool_capture_context2.h"
+#include "fallout_shelter_online/fallout_shelter_online_capture_context3.h"
 #include "fate_grand_order/fate_grand_order_capture_context1.h"
 #include "fifa_mobile/fifa_mobile_capture_context2.h"
 #include "free_fire/free_fire_capture_context1.h"
 #include "google_maps/google_maps_capture_context3.h"
+#include "happy_color/happy_color_capture_context2.h"
 #include "hay_day/hay_day_capture_context2.h"
 #include "hearthstone/hearthstone_capture_context2.h"
+#include "hill_climb_racing/hill_climb_racing_capture_context2.h"
 #include "kartrider_rush/kartrider_rush_capture_context1.h"
 #include "klondike_adventures/klondike_adventures_capture_context2.h"
 #include "lego_legacy/lego_legacy_capture_context2.h"
@@ -43,8 +49,11 @@
 #include "raid_shadow_legends/raid_shadow_legends_capture_context2.h"
 #include "real_commando_secret_mission/real_commando_secret_mission_capture_context1.h"
 #include "real_gangster_crime/real_gangster_crime_capture_context3.h"
+#include "rise_of_kingdoms/rise_of_kingdoms_capture_context4.h"
+#include "romancing_saga/romancing_saga_capture_context3.h"
 #include "saint_seiya_awakening/saint_seiya_awakening_capture_context2.h"
 #include "shadow_fight_2/shadow_fight_2_capture_context2.h"
+#include "sniper_3d/sniper_3d_capture_context3.h"
 #include "subway_surfers/subway_surfers_capture_context2.h"
 #include "temple_run_2/temple_run_2_capture_context1.h"
 #include "temple_run_300/temple_run_300_capture_context1.h"
@@ -52,6 +61,7 @@
 #include "whatsapp/whatsapp_capture_context1.h"
 #include "world_of_tanks_blitz/world_of_tanks_blitz_capture_context1.h"
 #include "world_war_doh/world_war_doh_capture_context2.h"
+#include "worms_zone_io/worms_zone_io_capture_context1.h"
 
 namespace angle
 {
@@ -72,6 +82,10 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
     {RestrictedTraceID::brawl_stars,
      {brawl_stars::kReplayFrameStart, brawl_stars::kReplayFrameEnd,
       brawl_stars::kReplayDrawSurfaceWidth, brawl_stars::kReplayDrawSurfaceHeight, "brawl_stars"}},
+    {RestrictedTraceID::bus_simulator_indonesia,
+     {bus_simulator_indonesia::kReplayFrameStart, bus_simulator_indonesia::kReplayFrameEnd,
+      bus_simulator_indonesia::kReplayDrawSurfaceWidth,
+      bus_simulator_indonesia::kReplayDrawSurfaceHeight, "bus_simulator_indonesia"}},
     {RestrictedTraceID::candy_crush_500,
      {candy_crush_500::kReplayFrameStart, candy_crush_500::kReplayFrameEnd,
       candy_crush_500::kReplayDrawSurfaceWidth, candy_crush_500::kReplayDrawSurfaceHeight,
@@ -80,9 +94,16 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
      {clash_of_clans::kReplayFrameStart, clash_of_clans::kReplayFrameEnd,
       clash_of_clans::kReplayDrawSurfaceWidth, clash_of_clans::kReplayDrawSurfaceHeight,
       "clash_of_clans"}},
+    {RestrictedTraceID::clash_royale,
+     {clash_royale::kReplayFrameStart, clash_royale::kReplayFrameEnd,
+      clash_royale::kReplayDrawSurfaceWidth, clash_royale::kReplayDrawSurfaceHeight,
+      "clash_royale"}},
     {RestrictedTraceID::cod_mobile,
      {cod_mobile::kReplayFrameStart, cod_mobile::kReplayFrameEnd,
       cod_mobile::kReplayDrawSurfaceWidth, cod_mobile::kReplayDrawSurfaceHeight, "cod_mobile"}},
+    {RestrictedTraceID::coin_master,
+     {coin_master::kReplayFrameStart, coin_master::kReplayFrameEnd,
+      coin_master::kReplayDrawSurfaceWidth, coin_master::kReplayDrawSurfaceHeight, "coin_master"}},
     {RestrictedTraceID::dragon_ball_legends,
      {dragon_ball_legends::kReplayFrameStart, dragon_ball_legends::kReplayFrameEnd,
       dragon_ball_legends::kReplayDrawSurfaceWidth, dragon_ball_legends::kReplayDrawSurfaceHeight,
@@ -98,6 +119,10 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
      {eight_ball_pool::kReplayFrameStart, eight_ball_pool::kReplayFrameEnd,
       eight_ball_pool::kReplayDrawSurfaceWidth, eight_ball_pool::kReplayDrawSurfaceHeight,
       "eight_ball_pool"}},
+    {RestrictedTraceID::fallout_shelter_online,
+     {fallout_shelter_online::kReplayFrameStart, fallout_shelter_online::kReplayFrameEnd,
+      fallout_shelter_online::kReplayDrawSurfaceWidth,
+      fallout_shelter_online::kReplayDrawSurfaceHeight, "fallout_shelter_online"}},
     {RestrictedTraceID::fate_grand_order,
      {fate_grand_order::kReplayFrameStart, fate_grand_order::kReplayFrameEnd,
       fate_grand_order::kReplayDrawSurfaceWidth, fate_grand_order::kReplayDrawSurfaceHeight,
@@ -111,12 +136,19 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
     {RestrictedTraceID::google_maps,
      {google_maps::kReplayFrameStart, google_maps::kReplayFrameEnd,
       google_maps::kReplayDrawSurfaceWidth, google_maps::kReplayDrawSurfaceHeight, "google_maps"}},
+    {RestrictedTraceID::happy_color,
+     {happy_color::kReplayFrameStart, happy_color::kReplayFrameEnd,
+      happy_color::kReplayDrawSurfaceWidth, happy_color::kReplayDrawSurfaceHeight, "happy_color"}},
     {RestrictedTraceID::hay_day,
      {hay_day::kReplayFrameStart, hay_day::kReplayFrameEnd, hay_day::kReplayDrawSurfaceWidth,
       hay_day::kReplayDrawSurfaceHeight, "hay_day"}},
     {RestrictedTraceID::hearthstone,
      {hearthstone::kReplayFrameStart, hearthstone::kReplayFrameEnd,
       hearthstone::kReplayDrawSurfaceWidth, hearthstone::kReplayDrawSurfaceHeight, "hearthstone"}},
+    {RestrictedTraceID::hill_climb_racing,
+     {hill_climb_racing::kReplayFrameStart, hill_climb_racing::kReplayFrameEnd,
+      hill_climb_racing::kReplayDrawSurfaceWidth, hill_climb_racing::kReplayDrawSurfaceHeight,
+      "hill_climb_racing"}},
     {RestrictedTraceID::kartrider_rush,
      {kartrider_rush::kReplayFrameStart, kartrider_rush::kReplayFrameEnd,
       kartrider_rush::kReplayDrawSurfaceWidth, kartrider_rush::kReplayDrawSurfaceHeight,
@@ -175,6 +207,14 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
      {real_gangster_crime::kReplayFrameStart, real_gangster_crime::kReplayFrameEnd,
       real_gangster_crime::kReplayDrawSurfaceWidth, real_gangster_crime::kReplayDrawSurfaceHeight,
       "real_gangster_crime"}},
+    {RestrictedTraceID::rise_of_kingdoms,
+     {rise_of_kingdoms::kReplayFrameStart, rise_of_kingdoms::kReplayFrameEnd,
+      rise_of_kingdoms::kReplayDrawSurfaceWidth, rise_of_kingdoms::kReplayDrawSurfaceHeight,
+      "rise_of_kingdoms"}},
+    {RestrictedTraceID::romancing_saga,
+     {romancing_saga::kReplayFrameStart, romancing_saga::kReplayFrameEnd,
+      romancing_saga::kReplayDrawSurfaceWidth, romancing_saga::kReplayDrawSurfaceHeight,
+      "romancing_saga"}},
     {RestrictedTraceID::saint_seiya_awakening,
      {saint_seiya_awakening::kReplayFrameStart, saint_seiya_awakening::kReplayFrameEnd,
       saint_seiya_awakening::kReplayDrawSurfaceWidth,
@@ -183,6 +223,9 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
      {shadow_fight_2::kReplayFrameStart, shadow_fight_2::kReplayFrameEnd,
       shadow_fight_2::kReplayDrawSurfaceWidth, shadow_fight_2::kReplayDrawSurfaceHeight,
       "shadow_fight_2"}},
+    {RestrictedTraceID::sniper_3d,
+     {sniper_3d::kReplayFrameStart, sniper_3d::kReplayFrameEnd, sniper_3d::kReplayDrawSurfaceWidth,
+      sniper_3d::kReplayDrawSurfaceHeight, "sniper_3d"}},
     {RestrictedTraceID::subway_surfers,
      {subway_surfers::kReplayFrameStart, subway_surfers::kReplayFrameEnd,
       subway_surfers::kReplayDrawSurfaceWidth, subway_surfers::kReplayDrawSurfaceHeight,
@@ -208,7 +251,11 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
     {RestrictedTraceID::world_war_doh,
      {world_war_doh::kReplayFrameStart, world_war_doh::kReplayFrameEnd,
       world_war_doh::kReplayDrawSurfaceWidth, world_war_doh::kReplayDrawSurfaceHeight,
-      "world_war_doh"}}};
+      "world_war_doh"}},
+    {RestrictedTraceID::worms_zone_io,
+     {worms_zone_io::kReplayFrameStart, worms_zone_io::kReplayFrameEnd,
+      worms_zone_io::kReplayDrawSurfaceWidth, worms_zone_io::kReplayDrawSurfaceHeight,
+      "worms_zone_io"}}};
 }
 
 const TraceInfo &GetTraceInfo(RestrictedTraceID traceID)
@@ -232,14 +279,23 @@ void ReplayFrame(RestrictedTraceID traceID, uint32_t frameIndex)
         case RestrictedTraceID::brawl_stars:
             brawl_stars::ReplayContext1Frame(frameIndex);
             break;
+        case RestrictedTraceID::bus_simulator_indonesia:
+            bus_simulator_indonesia::ReplayContext1Frame(frameIndex);
+            break;
         case RestrictedTraceID::candy_crush_500:
             candy_crush_500::ReplayContext1Frame(frameIndex);
             break;
         case RestrictedTraceID::clash_of_clans:
             clash_of_clans::ReplayContext1Frame(frameIndex);
             break;
+        case RestrictedTraceID::clash_royale:
+            clash_royale::ReplayContext2Frame(frameIndex);
+            break;
         case RestrictedTraceID::cod_mobile:
             cod_mobile::ReplayContext1Frame(frameIndex);
+            break;
+        case RestrictedTraceID::coin_master:
+            coin_master::ReplayContext2Frame(frameIndex);
             break;
         case RestrictedTraceID::dragon_ball_legends:
             dragon_ball_legends::ReplayContext1Frame(frameIndex);
@@ -253,6 +309,9 @@ void ReplayFrame(RestrictedTraceID traceID, uint32_t frameIndex)
         case RestrictedTraceID::eight_ball_pool:
             eight_ball_pool::ReplayContext2Frame(frameIndex);
             break;
+        case RestrictedTraceID::fallout_shelter_online:
+            fallout_shelter_online::ReplayContext3Frame(frameIndex);
+            break;
         case RestrictedTraceID::fate_grand_order:
             fate_grand_order::ReplayContext1Frame(frameIndex);
             break;
@@ -265,11 +324,17 @@ void ReplayFrame(RestrictedTraceID traceID, uint32_t frameIndex)
         case RestrictedTraceID::google_maps:
             google_maps::ReplayContext3Frame(frameIndex);
             break;
+        case RestrictedTraceID::happy_color:
+            happy_color::ReplayContext2Frame(frameIndex);
+            break;
         case RestrictedTraceID::hay_day:
             hay_day::ReplayContext2Frame(frameIndex);
             break;
         case RestrictedTraceID::hearthstone:
             hearthstone::ReplayContext2Frame(frameIndex);
+            break;
+        case RestrictedTraceID::hill_climb_racing:
+            hill_climb_racing::ReplayContext2Frame(frameIndex);
             break;
         case RestrictedTraceID::kartrider_rush:
             kartrider_rush::ReplayContext1Frame(frameIndex);
@@ -316,11 +381,20 @@ void ReplayFrame(RestrictedTraceID traceID, uint32_t frameIndex)
         case RestrictedTraceID::real_gangster_crime:
             real_gangster_crime::ReplayContext3Frame(frameIndex);
             break;
+        case RestrictedTraceID::rise_of_kingdoms:
+            rise_of_kingdoms::ReplayContext4Frame(frameIndex);
+            break;
+        case RestrictedTraceID::romancing_saga:
+            romancing_saga::ReplayContext3Frame(frameIndex);
+            break;
         case RestrictedTraceID::saint_seiya_awakening:
             saint_seiya_awakening::ReplayContext2Frame(frameIndex);
             break;
         case RestrictedTraceID::shadow_fight_2:
             shadow_fight_2::ReplayContext2Frame(frameIndex);
+            break;
+        case RestrictedTraceID::sniper_3d:
+            sniper_3d::ReplayContext3Frame(frameIndex);
             break;
         case RestrictedTraceID::subway_surfers:
             subway_surfers::ReplayContext2Frame(frameIndex);
@@ -342,6 +416,9 @@ void ReplayFrame(RestrictedTraceID traceID, uint32_t frameIndex)
             break;
         case RestrictedTraceID::world_war_doh:
             world_war_doh::ReplayContext2Frame(frameIndex);
+            break;
+        case RestrictedTraceID::worms_zone_io:
+            worms_zone_io::ReplayContext1Frame(frameIndex);
             break;
         default:
             fprintf(stderr, "Error in switch.\n");
@@ -366,14 +443,23 @@ void ResetReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::brawl_stars:
             brawl_stars::ResetContext1Replay();
             break;
+        case RestrictedTraceID::bus_simulator_indonesia:
+            bus_simulator_indonesia::ResetContext1Replay();
+            break;
         case RestrictedTraceID::candy_crush_500:
             candy_crush_500::ResetContext1Replay();
             break;
         case RestrictedTraceID::clash_of_clans:
             clash_of_clans::ResetContext1Replay();
             break;
+        case RestrictedTraceID::clash_royale:
+            clash_royale::ResetContext2Replay();
+            break;
         case RestrictedTraceID::cod_mobile:
             cod_mobile::ResetContext1Replay();
+            break;
+        case RestrictedTraceID::coin_master:
+            coin_master::ResetContext2Replay();
             break;
         case RestrictedTraceID::dragon_ball_legends:
             dragon_ball_legends::ResetContext1Replay();
@@ -387,6 +473,9 @@ void ResetReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::eight_ball_pool:
             eight_ball_pool::ResetContext2Replay();
             break;
+        case RestrictedTraceID::fallout_shelter_online:
+            fallout_shelter_online::ResetContext3Replay();
+            break;
         case RestrictedTraceID::fate_grand_order:
             fate_grand_order::ResetContext1Replay();
             break;
@@ -399,11 +488,17 @@ void ResetReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::google_maps:
             google_maps::ResetContext3Replay();
             break;
+        case RestrictedTraceID::happy_color:
+            happy_color::ResetContext2Replay();
+            break;
         case RestrictedTraceID::hay_day:
             hay_day::ResetContext2Replay();
             break;
         case RestrictedTraceID::hearthstone:
             hearthstone::ResetContext2Replay();
+            break;
+        case RestrictedTraceID::hill_climb_racing:
+            hill_climb_racing::ResetContext2Replay();
             break;
         case RestrictedTraceID::kartrider_rush:
             kartrider_rush::ResetContext1Replay();
@@ -450,11 +545,20 @@ void ResetReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::real_gangster_crime:
             real_gangster_crime::ResetContext3Replay();
             break;
+        case RestrictedTraceID::rise_of_kingdoms:
+            rise_of_kingdoms::ResetContext4Replay();
+            break;
+        case RestrictedTraceID::romancing_saga:
+            romancing_saga::ResetContext3Replay();
+            break;
         case RestrictedTraceID::saint_seiya_awakening:
             saint_seiya_awakening::ResetContext2Replay();
             break;
         case RestrictedTraceID::shadow_fight_2:
             shadow_fight_2::ResetContext2Replay();
+            break;
+        case RestrictedTraceID::sniper_3d:
+            sniper_3d::ResetContext3Replay();
             break;
         case RestrictedTraceID::subway_surfers:
             subway_surfers::ResetContext2Replay();
@@ -476,6 +580,9 @@ void ResetReplay(RestrictedTraceID traceID)
             break;
         case RestrictedTraceID::world_war_doh:
             world_war_doh::ResetContext2Replay();
+            break;
+        case RestrictedTraceID::worms_zone_io:
+            worms_zone_io::ResetContext1Replay();
             break;
         default:
             fprintf(stderr, "Error in switch.\n");
@@ -500,14 +607,23 @@ void SetupReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::brawl_stars:
             brawl_stars::SetupContext1Replay();
             break;
+        case RestrictedTraceID::bus_simulator_indonesia:
+            bus_simulator_indonesia::SetupContext1Replay();
+            break;
         case RestrictedTraceID::candy_crush_500:
             candy_crush_500::SetupContext1Replay();
             break;
         case RestrictedTraceID::clash_of_clans:
             clash_of_clans::SetupContext1Replay();
             break;
+        case RestrictedTraceID::clash_royale:
+            clash_royale::SetupContext2Replay();
+            break;
         case RestrictedTraceID::cod_mobile:
             cod_mobile::SetupContext1Replay();
+            break;
+        case RestrictedTraceID::coin_master:
+            coin_master::SetupContext2Replay();
             break;
         case RestrictedTraceID::dragon_ball_legends:
             dragon_ball_legends::SetupContext1Replay();
@@ -521,6 +637,9 @@ void SetupReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::eight_ball_pool:
             eight_ball_pool::SetupContext2Replay();
             break;
+        case RestrictedTraceID::fallout_shelter_online:
+            fallout_shelter_online::SetupContext3Replay();
+            break;
         case RestrictedTraceID::fate_grand_order:
             fate_grand_order::SetupContext1Replay();
             break;
@@ -533,11 +652,17 @@ void SetupReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::google_maps:
             google_maps::SetupContext3Replay();
             break;
+        case RestrictedTraceID::happy_color:
+            happy_color::SetupContext2Replay();
+            break;
         case RestrictedTraceID::hay_day:
             hay_day::SetupContext2Replay();
             break;
         case RestrictedTraceID::hearthstone:
             hearthstone::SetupContext2Replay();
+            break;
+        case RestrictedTraceID::hill_climb_racing:
+            hill_climb_racing::SetupContext2Replay();
             break;
         case RestrictedTraceID::kartrider_rush:
             kartrider_rush::SetupContext1Replay();
@@ -584,11 +709,20 @@ void SetupReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::real_gangster_crime:
             real_gangster_crime::SetupContext3Replay();
             break;
+        case RestrictedTraceID::rise_of_kingdoms:
+            rise_of_kingdoms::SetupContext4Replay();
+            break;
+        case RestrictedTraceID::romancing_saga:
+            romancing_saga::SetupContext3Replay();
+            break;
         case RestrictedTraceID::saint_seiya_awakening:
             saint_seiya_awakening::SetupContext2Replay();
             break;
         case RestrictedTraceID::shadow_fight_2:
             shadow_fight_2::SetupContext2Replay();
+            break;
+        case RestrictedTraceID::sniper_3d:
+            sniper_3d::SetupContext3Replay();
             break;
         case RestrictedTraceID::subway_surfers:
             subway_surfers::SetupContext2Replay();
@@ -610,6 +744,9 @@ void SetupReplay(RestrictedTraceID traceID)
             break;
         case RestrictedTraceID::world_war_doh:
             world_war_doh::SetupContext2Replay();
+            break;
+        case RestrictedTraceID::worms_zone_io:
+            worms_zone_io::SetupContext1Replay();
             break;
         default:
             fprintf(stderr, "Error in switch.\n");
@@ -634,14 +771,23 @@ void SetBinaryDataDir(RestrictedTraceID traceID, const char *dataDir)
         case RestrictedTraceID::brawl_stars:
             brawl_stars::SetBinaryDataDir(dataDir);
             break;
+        case RestrictedTraceID::bus_simulator_indonesia:
+            bus_simulator_indonesia::SetBinaryDataDir(dataDir);
+            break;
         case RestrictedTraceID::candy_crush_500:
             candy_crush_500::SetBinaryDataDir(dataDir);
             break;
         case RestrictedTraceID::clash_of_clans:
             clash_of_clans::SetBinaryDataDir(dataDir);
             break;
+        case RestrictedTraceID::clash_royale:
+            clash_royale::SetBinaryDataDir(dataDir);
+            break;
         case RestrictedTraceID::cod_mobile:
             cod_mobile::SetBinaryDataDir(dataDir);
+            break;
+        case RestrictedTraceID::coin_master:
+            coin_master::SetBinaryDataDir(dataDir);
             break;
         case RestrictedTraceID::dragon_ball_legends:
             dragon_ball_legends::SetBinaryDataDir(dataDir);
@@ -655,6 +801,9 @@ void SetBinaryDataDir(RestrictedTraceID traceID, const char *dataDir)
         case RestrictedTraceID::eight_ball_pool:
             eight_ball_pool::SetBinaryDataDir(dataDir);
             break;
+        case RestrictedTraceID::fallout_shelter_online:
+            fallout_shelter_online::SetBinaryDataDir(dataDir);
+            break;
         case RestrictedTraceID::fate_grand_order:
             fate_grand_order::SetBinaryDataDir(dataDir);
             break;
@@ -667,11 +816,17 @@ void SetBinaryDataDir(RestrictedTraceID traceID, const char *dataDir)
         case RestrictedTraceID::google_maps:
             google_maps::SetBinaryDataDir(dataDir);
             break;
+        case RestrictedTraceID::happy_color:
+            happy_color::SetBinaryDataDir(dataDir);
+            break;
         case RestrictedTraceID::hay_day:
             hay_day::SetBinaryDataDir(dataDir);
             break;
         case RestrictedTraceID::hearthstone:
             hearthstone::SetBinaryDataDir(dataDir);
+            break;
+        case RestrictedTraceID::hill_climb_racing:
+            hill_climb_racing::SetBinaryDataDir(dataDir);
             break;
         case RestrictedTraceID::kartrider_rush:
             kartrider_rush::SetBinaryDataDir(dataDir);
@@ -718,11 +873,20 @@ void SetBinaryDataDir(RestrictedTraceID traceID, const char *dataDir)
         case RestrictedTraceID::real_gangster_crime:
             real_gangster_crime::SetBinaryDataDir(dataDir);
             break;
+        case RestrictedTraceID::rise_of_kingdoms:
+            rise_of_kingdoms::SetBinaryDataDir(dataDir);
+            break;
+        case RestrictedTraceID::romancing_saga:
+            romancing_saga::SetBinaryDataDir(dataDir);
+            break;
         case RestrictedTraceID::saint_seiya_awakening:
             saint_seiya_awakening::SetBinaryDataDir(dataDir);
             break;
         case RestrictedTraceID::shadow_fight_2:
             shadow_fight_2::SetBinaryDataDir(dataDir);
+            break;
+        case RestrictedTraceID::sniper_3d:
+            sniper_3d::SetBinaryDataDir(dataDir);
             break;
         case RestrictedTraceID::subway_surfers:
             subway_surfers::SetBinaryDataDir(dataDir);
@@ -744,6 +908,9 @@ void SetBinaryDataDir(RestrictedTraceID traceID, const char *dataDir)
             break;
         case RestrictedTraceID::world_war_doh:
             world_war_doh::SetBinaryDataDir(dataDir);
+            break;
+        case RestrictedTraceID::worms_zone_io:
+            worms_zone_io::SetBinaryDataDir(dataDir);
             break;
         default:
             fprintf(stderr, "Error in switch.\n");
@@ -768,14 +935,23 @@ void SetBinaryDataDecompressCallback(RestrictedTraceID traceID, DecompressCallba
         case RestrictedTraceID::brawl_stars:
             brawl_stars::SetBinaryDataDecompressCallback(callback);
             break;
+        case RestrictedTraceID::bus_simulator_indonesia:
+            bus_simulator_indonesia::SetBinaryDataDecompressCallback(callback);
+            break;
         case RestrictedTraceID::candy_crush_500:
             candy_crush_500::SetBinaryDataDecompressCallback(callback);
             break;
         case RestrictedTraceID::clash_of_clans:
             clash_of_clans::SetBinaryDataDecompressCallback(callback);
             break;
+        case RestrictedTraceID::clash_royale:
+            clash_royale::SetBinaryDataDecompressCallback(callback);
+            break;
         case RestrictedTraceID::cod_mobile:
             cod_mobile::SetBinaryDataDecompressCallback(callback);
+            break;
+        case RestrictedTraceID::coin_master:
+            coin_master::SetBinaryDataDecompressCallback(callback);
             break;
         case RestrictedTraceID::dragon_ball_legends:
             dragon_ball_legends::SetBinaryDataDecompressCallback(callback);
@@ -789,6 +965,9 @@ void SetBinaryDataDecompressCallback(RestrictedTraceID traceID, DecompressCallba
         case RestrictedTraceID::eight_ball_pool:
             eight_ball_pool::SetBinaryDataDecompressCallback(callback);
             break;
+        case RestrictedTraceID::fallout_shelter_online:
+            fallout_shelter_online::SetBinaryDataDecompressCallback(callback);
+            break;
         case RestrictedTraceID::fate_grand_order:
             fate_grand_order::SetBinaryDataDecompressCallback(callback);
             break;
@@ -801,11 +980,17 @@ void SetBinaryDataDecompressCallback(RestrictedTraceID traceID, DecompressCallba
         case RestrictedTraceID::google_maps:
             google_maps::SetBinaryDataDecompressCallback(callback);
             break;
+        case RestrictedTraceID::happy_color:
+            happy_color::SetBinaryDataDecompressCallback(callback);
+            break;
         case RestrictedTraceID::hay_day:
             hay_day::SetBinaryDataDecompressCallback(callback);
             break;
         case RestrictedTraceID::hearthstone:
             hearthstone::SetBinaryDataDecompressCallback(callback);
+            break;
+        case RestrictedTraceID::hill_climb_racing:
+            hill_climb_racing::SetBinaryDataDecompressCallback(callback);
             break;
         case RestrictedTraceID::kartrider_rush:
             kartrider_rush::SetBinaryDataDecompressCallback(callback);
@@ -852,11 +1037,20 @@ void SetBinaryDataDecompressCallback(RestrictedTraceID traceID, DecompressCallba
         case RestrictedTraceID::real_gangster_crime:
             real_gangster_crime::SetBinaryDataDecompressCallback(callback);
             break;
+        case RestrictedTraceID::rise_of_kingdoms:
+            rise_of_kingdoms::SetBinaryDataDecompressCallback(callback);
+            break;
+        case RestrictedTraceID::romancing_saga:
+            romancing_saga::SetBinaryDataDecompressCallback(callback);
+            break;
         case RestrictedTraceID::saint_seiya_awakening:
             saint_seiya_awakening::SetBinaryDataDecompressCallback(callback);
             break;
         case RestrictedTraceID::shadow_fight_2:
             shadow_fight_2::SetBinaryDataDecompressCallback(callback);
+            break;
+        case RestrictedTraceID::sniper_3d:
+            sniper_3d::SetBinaryDataDecompressCallback(callback);
             break;
         case RestrictedTraceID::subway_surfers:
             subway_surfers::SetBinaryDataDecompressCallback(callback);
@@ -878,6 +1072,9 @@ void SetBinaryDataDecompressCallback(RestrictedTraceID traceID, DecompressCallba
             break;
         case RestrictedTraceID::world_war_doh:
             world_war_doh::SetBinaryDataDecompressCallback(callback);
+            break;
+        case RestrictedTraceID::worms_zone_io:
+            worms_zone_io::SetBinaryDataDecompressCallback(callback);
             break;
         default:
             fprintf(stderr, "Error in switch.\n");

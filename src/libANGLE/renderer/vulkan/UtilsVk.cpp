@@ -996,7 +996,7 @@ angle::Result UtilsVk::setupProgram(ContextVk *contextVk,
         pipelineAndSerial->updateSerial(serial);
         commandBuffer->bindComputePipeline(pipelineAndSerial->get());
 
-        contextVk->invalidateComputePipeline();
+        contextVk->invalidateComputePipelineBinding();
     }
     else
     {
@@ -1017,7 +1017,7 @@ angle::Result UtilsVk::setupProgram(ContextVk *contextVk,
         helper->updateSerial(serial);
         commandBuffer->bindGraphicsPipeline(helper->getPipeline());
 
-        contextVk->invalidateGraphicsPipeline();
+        contextVk->invalidateGraphicsPipelineBinding();
     }
 
     if (descriptorSet != VK_NULL_HANDLE)
@@ -1492,7 +1492,7 @@ angle::Result UtilsVk::clearFramebuffer(ContextVk *contextVk,
     }
     else
     {
-        ANGLE_TRY(contextVk->startRenderPass(scissoredRenderArea, &commandBuffer));
+        ANGLE_TRY(contextVk->startRenderPass(scissoredRenderArea, &commandBuffer, nullptr));
     }
 
     if (params.clearStencil || params.clearDepth)
@@ -1604,7 +1604,9 @@ angle::Result UtilsVk::clearFramebuffer(ContextVk *contextVk,
                            sizeof(shaderParams), commandBuffer));
 
     // Make sure transform feedback is paused
-    contextVk->pauseTransformFeedbackIfStartedAndRebindBuffersOnResume();
+    bool isTransformFeedbackActiveUnpaused =
+        contextVk->getStartedRenderPassCommands().isTransformFeedbackActiveUnpaused();
+    contextVk->pauseTransformFeedbackIfActiveUnpaused();
 
     // Make sure this draw call doesn't count towards occlusion query results.
     contextVk->pauseRenderPassQueriesIfActive();
@@ -1615,7 +1617,7 @@ angle::Result UtilsVk::clearFramebuffer(ContextVk *contextVk,
     // If transform feedback was active, we can't pause and resume it in the same render pass
     // because we can't insert a memory barrier for the counter buffers.  In that case, break the
     // render pass.
-    if (contextVk->getStartedRenderPassCommands().isTransformFeedbackStarted())
+    if (isTransformFeedbackActiveUnpaused)
     {
         ANGLE_TRY(contextVk->flushCommandsAndEndRenderPass());
     }
@@ -1810,7 +1812,7 @@ angle::Result UtilsVk::blitResolveImpl(ContextVk *contextVk,
     pipelineDesc.setScissor(gl_vk::GetRect(params.blitArea));
 
     vk::CommandBuffer *commandBuffer;
-    ANGLE_TRY(framebuffer->startNewRenderPass(contextVk, params.blitArea, &commandBuffer));
+    ANGLE_TRY(framebuffer->startNewRenderPass(contextVk, params.blitArea, &commandBuffer, nullptr));
     contextVk->onImageRenderPassRead(src->getAspectFlags(), vk::ImageLayout::FragmentShaderReadOnly,
                                      src);
 

@@ -985,11 +985,11 @@ class CommandBufferHelper : angle::NonCopyable
     // General Functions (non-renderPass specific)
     void initialize(bool isRenderPassCommandBuffer);
 
-    void bufferRead(ResourceUseList *resourceUseList,
+    void bufferRead(ContextVk *contextVk,
                     VkAccessFlags readAccessType,
                     PipelineStage readStage,
                     BufferHelper *buffer);
-    void bufferWrite(ResourceUseList *resourceUseList,
+    void bufferWrite(ContextVk *contextVk,
                      VkAccessFlags writeAccessType,
                      PipelineStage writeStage,
                      AliasingMode aliasingMode,
@@ -1123,6 +1123,7 @@ class CommandBufferHelper : angle::NonCopyable
     void resumeTransformFeedback();
     void pauseTransformFeedback();
     bool isTransformFeedbackStarted() const { return mValidTransformFeedbackBufferCount > 0; }
+    bool isTransformFeedbackActiveUnpaused() const { return mIsTransformFeedbackActiveUnpaused; }
 
     uint32_t getAndResetCounter()
     {
@@ -1201,6 +1202,7 @@ class CommandBufferHelper : angle::NonCopyable
     gl::TransformFeedbackBuffersArray<VkBuffer> mTransformFeedbackCounterBuffers;
     uint32_t mValidTransformFeedbackBufferCount;
     bool mRebindTransformFeedbackBuffers;
+    bool mIsTransformFeedbackActiveUnpaused;
 
     bool mIsRenderPassCommandBuffer;
     bool mReadOnlyDepthStencilMode;
@@ -1226,7 +1228,7 @@ class CommandBufferHelper : angle::NonCopyable
     PackedAttachmentIndex mDepthStencilAttachmentIndex;
 
     // Tracks resources used in the command buffer.
-    // For Buffers, we track the read/write access type so we can enable simuntaneous reads.
+    // For Buffers, we track the read/write access type so we can enable simultaneous reads.
     // Images have unique layouts unlike buffers therefore we don't support multi-read.
     angle::FastIntegerMap<BufferAccess> mUsedBuffers;
     angle::FastIntegerSet mRenderPassUsedImages;
@@ -1313,6 +1315,12 @@ bool CanCopyWithTransfer(RendererVk *renderer,
                          const Format &destFormat,
                          VkImageTiling destTilingMode);
 
+bool FillImageFormatListInfo(RendererVk *rendererVk,
+                             const vk::Format &format,
+                             VkFormat *imageListVkFormat,
+                             VkImageCreateFlags *imageCreateFlags,
+                             VkImageFormatListCreateInfoKHR *imageFormatListCreateInfo);
+
 class ImageHelper final : public Resource, public angle::Subject
 {
   public:
@@ -1336,6 +1344,18 @@ class ImageHelper final : public Resource, public angle::Subject
                        uint32_t mipLevels,
                        uint32_t layerCount,
                        bool isRobustResourceInitEnabled);
+    angle::Result initMSAASwapchain(Context *context,
+                                    gl::TextureType textureType,
+                                    const VkExtent3D &extents,
+                                    bool rotatedAspectRatio,
+                                    const Format &format,
+                                    GLint samples,
+                                    VkImageUsageFlags usage,
+                                    gl::LevelIndex baseLevel,
+                                    gl::LevelIndex maxLevel,
+                                    uint32_t mipLevels,
+                                    uint32_t layerCount,
+                                    bool isRobustResourceInitEnabled);
     angle::Result initExternal(Context *context,
                                gl::TextureType textureType,
                                const VkExtent3D &extents,
@@ -1435,6 +1455,7 @@ class ImageHelper final : public Resource, public angle::Subject
     void init2DWeakReference(Context *context,
                              VkImage handle,
                              const gl::Extents &glExtents,
+                             bool rotatedAspectRatio,
                              const Format &format,
                              GLint samples,
                              bool isRobustResourceInitEnabled);
@@ -1448,6 +1469,7 @@ class ImageHelper final : public Resource, public angle::Subject
     VkImageUsageFlags getUsage() const { return mUsage; }
     VkImageType getType() const { return mImageType; }
     const VkExtent3D &getExtents() const { return mExtents; }
+    const VkExtent3D getRotatedExtents() const;
     uint32_t getLayerCount() const { return mLayerCount; }
     uint32_t getLevelCount() const { return mLevelCount; }
     const Format &getFormat() const { return *mFormat; }
@@ -1467,6 +1489,7 @@ class ImageHelper final : public Resource, public angle::Subject
     // Helper function to calculate the extents of a render target created for a certain mip of the
     // image.
     gl::Extents getLevelExtents2D(LevelIndex levelVk) const;
+    gl::Extents getRotatedLevelExtents2D(LevelIndex levelVk) const;
     bool isDepthOrStencil() const;
 
     // Clear either color or depth/stencil based on image format.
@@ -1923,7 +1946,13 @@ class ImageHelper final : public Resource, public angle::Subject
     VkImageType mImageType;
     VkImageTiling mTilingMode;
     VkImageUsageFlags mUsage;
+    // For Android swapchain images, the Vulkan VkImage must be "rotated".  However, most of ANGLE
+    // uses non-rotated extents (i.e. the way the application views the extents--see "Introduction
+    // to Android rotation and pre-rotation" in "SurfaceVk.cpp").  Thus, mExtents are non-rotated.
+    // The rotated extents are also stored along with a bool that indicates if the aspect ratio is
+    // different between the rotated and non-rotated extents.
     VkExtent3D mExtents;
+    bool mRotatedAspectRatio;
     const Format *mFormat;
     GLint mSamples;
     ImageSerial mImageSerial;

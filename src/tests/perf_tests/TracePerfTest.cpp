@@ -349,6 +349,30 @@ TracePerfTest::TracePerfTest()
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
     }
 
+    if (param.testID == RestrictedTraceID::rise_of_kingdoms)
+    {
+        addExtensionPrerequisite("GL_OES_EGL_image_external");
+    }
+
+    if (param.testID == RestrictedTraceID::happy_color)
+    {
+        if (IsWindows() && IsAMD() && param.getRenderer() == EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE)
+        {
+            mSkipTest = true;
+        }
+    }
+
+    if (param.testID == RestrictedTraceID::bus_simulator_indonesia)
+    {
+        // TODO(https://anglebug.com/5629) Linux+(Intel|AMD) native GLES generates
+        // GL_INVALID_OPERATION
+        if (IsLinux() && (IsIntel() || IsAMD()) &&
+            param.getRenderer() != EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE)
+        {
+            mSkipTest = true;
+        }
+    }
+
     // We already swap in TracePerfTest::drawBenchmark, no need to swap again in the harness.
     disableTestHarnessSwap();
 

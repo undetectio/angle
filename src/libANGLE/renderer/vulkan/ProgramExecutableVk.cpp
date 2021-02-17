@@ -33,8 +33,10 @@ bool ValidateTransformedSpirV(ContextVk *contextVk,
     for (gl::ShaderType shaderType : linkedShaderStages)
     {
         GlslangSpirvOptions options;
-        options.shaderType                         = shaderType;
-        options.preRotation                        = SurfaceRotation::FlippedRotated90Degrees;
+        options.shaderType  = shaderType;
+        options.preRotation = SurfaceRotation::FlippedRotated90Degrees;
+        options.negativeViewportSupported =
+            contextVk->getFeatures().supportsNegativeViewport.enabled;
         options.transformPositionToVulkanClipSpace = true;
         options.removeDebugInfo                    = true;
         options.isTransformFeedbackStage           = shaderType == lastPreFragmentStage;
@@ -135,8 +137,9 @@ angle::Result ProgramInfo::initProgram(ContextVk *contextVk,
     options.shaderType = shaderType;
     options.removeEarlyFragmentTestsOptimization =
         shaderType == gl::ShaderType::Fragment && optionBits.removeEarlyFragmentTestsOptimization;
-    options.removeDebugInfo          = !contextVk->getRenderer()->getEnableValidationLayers();
-    options.isTransformFeedbackStage = isLastPreFragmentStage;
+    options.removeDebugInfo           = !contextVk->getRenderer()->getEnableValidationLayers();
+    options.isTransformFeedbackStage  = isLastPreFragmentStage;
+    options.negativeViewportSupported = contextVk->getFeatures().supportsNegativeViewport.enabled;
 
     if (isLastPreFragmentStage)
     {
@@ -1006,7 +1009,6 @@ void ProgramExecutableVk::updateDefaultUniformsDescriptorSet(
 angle::Result ProgramExecutableVk::updateBuffersDescriptorSet(
     ContextVk *contextVk,
     const gl::ShaderType shaderType,
-    vk::ResourceUseList *resourceUseList,
     vk::CommandBufferHelper *commandBufferHelper,
     const std::vector<gl::InterfaceBlock> &blocks,
     VkDescriptorType descriptorType)
@@ -1084,13 +1086,13 @@ angle::Result ProgramExecutableVk::updateBuffersDescriptorSet(
         {
             // We set the SHADER_READ_BIT to be conservative.
             VkAccessFlags accessFlags = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-            commandBufferHelper->bufferWrite(resourceUseList, accessFlags,
+            commandBufferHelper->bufferWrite(contextVk, accessFlags,
                                              vk::GetPipelineStage(shaderType),
                                              vk::AliasingMode::Allowed, &bufferHelper);
         }
         else
         {
-            commandBufferHelper->bufferRead(resourceUseList, VK_ACCESS_UNIFORM_READ_BIT,
+            commandBufferHelper->bufferRead(contextVk, VK_ACCESS_UNIFORM_READ_BIT,
                                             vk::GetPipelineStage(shaderType), &bufferHelper);
         }
     }
@@ -1102,7 +1104,6 @@ angle::Result ProgramExecutableVk::updateAtomicCounterBuffersDescriptorSet(
     const gl::ProgramState &programState,
     const gl::ShaderType shaderType,
     ContextVk *contextVk,
-    vk::ResourceUseList *resourceUseList,
     vk::CommandBufferHelper *commandBufferHelper)
 {
     const gl::State &glState = contextVk->getState();
@@ -1166,7 +1167,7 @@ angle::Result ProgramExecutableVk::updateAtomicCounterBuffersDescriptorSet(
 
         // We set SHADER_READ_BIT to be conservative.
         commandBufferHelper->bufferWrite(
-            resourceUseList, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            contextVk, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
             vk::GetPipelineStage(shaderType), vk::AliasingMode::Allowed, &bufferHelper);
 
         writtenBindings.set(binding);
@@ -1335,7 +1336,6 @@ angle::Result ProgramExecutableVk::updateImagesDescriptorSet(
 
 angle::Result ProgramExecutableVk::updateShaderResourcesDescriptorSet(
     ContextVk *contextVk,
-    vk::ResourceUseList *resourceUseList,
     vk::CommandBufferHelper *commandBufferHelper)
 {
     const gl::ProgramExecutable *executable = contextVk->getState().getProgramExecutable();
@@ -1352,14 +1352,14 @@ angle::Result ProgramExecutableVk::updateShaderResourcesDescriptorSet(
         const gl::ProgramState *programState = programStates[shaderType];
         ASSERT(programState);
 
-        ANGLE_TRY(updateBuffersDescriptorSet(contextVk, shaderType, resourceUseList,
-                                             commandBufferHelper, programState->getUniformBlocks(),
+        ANGLE_TRY(updateBuffersDescriptorSet(contextVk, shaderType, commandBufferHelper,
+                                             programState->getUniformBlocks(),
                                              VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER));
-        ANGLE_TRY(updateBuffersDescriptorSet(
-            contextVk, shaderType, resourceUseList, commandBufferHelper,
-            programState->getShaderStorageBlocks(), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER));
+        ANGLE_TRY(updateBuffersDescriptorSet(contextVk, shaderType, commandBufferHelper,
+                                             programState->getShaderStorageBlocks(),
+                                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER));
         ANGLE_TRY(updateAtomicCounterBuffersDescriptorSet(*programState, shaderType, contextVk,
-                                                          resourceUseList, commandBufferHelper));
+                                                          commandBufferHelper));
         ANGLE_TRY(updateImagesDescriptorSet(contextVk, programState->getExecutable(), shaderType));
     }
 
