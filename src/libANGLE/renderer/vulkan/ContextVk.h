@@ -294,6 +294,9 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     ANGLE_INLINE void invalidateTexture(gl::TextureType target) override {}
 
+    // EXT_shader_framebuffer_fetch_non_coherent
+    void framebufferFetchBarrier() override;
+
     VkDevice getDevice() const;
     egl::ContextPriority getPriority() const { return mContextPriority; }
 
@@ -591,6 +594,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // Dirty bits.
     enum DirtyBitType : size_t
     {
+        // A glMemoryBarrier has been called and command buffers may need flushing.
+        DIRTY_BIT_MEMORY_BARRIER,
         // Dirty bits that must be processed before the render pass is started.  The handlers for
         // these dirty bits don't record any commands.
         DIRTY_BIT_DEFAULT_ATTRIBS,
@@ -617,6 +622,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
         DIRTY_BIT_TRANSFORM_FEEDBACK_BUFFERS,
         DIRTY_BIT_TRANSFORM_FEEDBACK_RESUME,
         DIRTY_BIT_DESCRIPTOR_SETS,
+        DIRTY_BIT_FRAMEBUFFER_FETCH_BARRIER,
         DIRTY_BIT_MAX,
     };
 
@@ -777,6 +783,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     void invalidateDriverUniforms();
 
     // Handlers for graphics pipeline dirty bits.
+    angle::Result handleDirtyGraphicsMemorybarrier(DirtyBits::Iterator *dirtyBitsIterator,
+                                                   DirtyBits dirtyBitMask);
     angle::Result handleDirtyGraphicsEventLog(DirtyBits::Iterator *dirtyBitsIterator,
                                               DirtyBits dirtyBitMask);
     angle::Result handleDirtyGraphicsDefaultAttribs(DirtyBits::Iterator *dirtyBitsIterator,
@@ -799,6 +807,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                                            DirtyBits dirtyBitMask);
     angle::Result handleDirtyGraphicsShaderResources(DirtyBits::Iterator *dirtyBitsIterator,
                                                      DirtyBits dirtyBitMask);
+    angle::Result handleDirtyGraphicsFramebufferFetchBarrier(DirtyBits::Iterator *dirtyBitsIterator,
+                                                             DirtyBits dirtyBitMask);
     angle::Result handleDirtyGraphicsTransformFeedbackBuffersEmulation(
         DirtyBits::Iterator *dirtyBitsIterator,
         DirtyBits dirtyBitMask);
@@ -811,6 +821,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                                     DirtyBits dirtyBitMask);
 
     // Handlers for compute pipeline dirty bits.
+    angle::Result handleDirtyComputeMemoryBarrier();
     angle::Result handleDirtyComputeEventLog();
     angle::Result handleDirtyComputePipelineDesc();
     angle::Result handleDirtyComputePipelineBinding();
@@ -821,6 +832,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result handleDirtyComputeDescriptorSets();
 
     // Common parts of the common dirty bit handlers.
+    angle::Result handleDirtyMemorybarrierImpl(DirtyBits::Iterator *dirtyBitsIterator,
+                                               DirtyBits dirtyBitMask);
     angle::Result handleDirtyEventLogImpl(vk::CommandBuffer *commandBuffer);
     angle::Result handleDirtyTexturesImpl(vk::CommandBufferHelper *commandBufferHelper);
     angle::Result handleDirtyShaderResourcesImpl(vk::CommandBufferHelper *commandBufferHelper);
@@ -884,6 +897,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     angle::Result onResourceAccess(const vk::CommandBufferAccess &access);
     angle::Result flushCommandBuffersIfNecessary(const vk::CommandBufferAccess &access);
+    bool renderPassUsesStorageResources() const;
 
     void outputCumulativePerfCounters();
 
@@ -1031,6 +1045,9 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     bool mEGLSyncObjectPendingFlush;
     bool mHasDeferredFlush;
 
+    // GL_EXT_shader_framebuffer_fetch_non_coherent
+    bool mLastProgramUsesFramebufferFetch;
+
     // Semaphores that must be waited on in the next submission.
     std::vector<VkSemaphore> mWaitSemaphores;
     std::vector<VkPipelineStageFlags> mWaitSemaphoreStageMasks;
@@ -1053,8 +1070,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     vk::ResourceUseList mResourceUseList;
 
     egl::ContextPriority mContextPriority;
-
-    const vk::BufferHelper *mCurrentIndirectBuffer;
 
     // Storage for vkUpdateDescriptorSets
     std::vector<VkDescriptorBufferInfo> mDescriptorBufferInfos;

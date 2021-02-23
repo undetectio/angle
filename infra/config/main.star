@@ -367,19 +367,25 @@ luci.cq_group(
             builder = 'chromium:try/linux-swangle-try-tot-angle-x64',
         ),
         luci.cq_tryjob_verifier(
+            builder = 'chromium:try/mac-angle-chromium-try',
+        ),
+        luci.cq_tryjob_verifier(
             builder = 'chromium:try/mac-angle-rel',
+        ),
+        luci.cq_tryjob_verifier(
+            builder = 'chromium:try/mac-angle-try',
+        ),
+        luci.cq_tryjob_verifier(
+            builder = 'chromium:try/win-angle-chromium-x64-try',
         ),
         luci.cq_tryjob_verifier(
             builder = 'chromium:try/win-angle-deqp-rel-32',
         ),
         luci.cq_tryjob_verifier(
-            builder = 'chromium:try/win-angle-deqp-rel-64',
-        ),
-        luci.cq_tryjob_verifier(
             builder = 'chromium:try/win-angle-rel-32',
         ),
         luci.cq_tryjob_verifier(
-            builder = 'chromium:try/win-angle-rel-64',
+            builder = 'chromium:try/win-angle-x64-try',
         ),
         luci.cq_tryjob_verifier(
             builder = 'chromium:try/win-swangle-try-tot-angle-x86',

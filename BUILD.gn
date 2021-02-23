@@ -184,7 +184,7 @@ config("extra_warnings") {
       "-Wnewline-eof",
       "-Wnon-virtual-dtor",
       "-Wredundant-parens",
-      "-Wreturn-std-move-in-c++11",
+      "-Wreturn-std-move",
       "-Wshadow-field",
       "-Wtautological-type-limit-compare",
       "-Wundefined-reinterpret-cast",
@@ -927,6 +927,7 @@ config("library_name_config") {
 config("angle_static") {
   defines = [
     "ANGLE_EXPORT=",
+    "ANGLE_STATIC=1",
     "ANGLE_UTIL_EXPORT=",
     "EGLAPI=",
     "GL_APICALL=",

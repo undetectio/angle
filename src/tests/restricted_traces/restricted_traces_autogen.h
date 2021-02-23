@@ -54,6 +54,7 @@ namespace angle
 {
 enum class RestrictedTraceID
 {
+    aliexpress,
     angry_birds_2_1500,
     arena_of_valor,
     asphalt_8,
@@ -84,6 +85,7 @@ enum class RestrictedTraceID
     manhattan_10,
     manhattan_31,
     marvel_contest_of_champions,
+    messenger_lite,
     minecraft,
     mobile_legends,
     nba2k20_800,

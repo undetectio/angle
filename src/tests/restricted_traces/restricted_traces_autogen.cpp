@@ -11,6 +11,7 @@
 
 #include "common/PackedEnums.h"
 
+#include "aliexpress/aliexpress_capture_context1.h"
 #include "angry_birds_2_1500/angry_birds_2_1500_capture_context1.h"
 #include "arena_of_valor/arena_of_valor_capture_context1.h"
 #include "asphalt_8/asphalt_8_capture_context2.h"
@@ -41,6 +42,7 @@
 #include "manhattan_10/manhattan_10_capture_context1.h"
 #include "manhattan_31/manhattan_31_capture_context6.h"
 #include "marvel_contest_of_champions/marvel_contest_of_champions_capture_context1.h"
+#include "messenger_lite/messenger_lite_capture_context1.h"
 #include "minecraft/minecraft_capture_context2.h"
 #include "mobile_legends/mobile_legends_capture_context1.h"
 #include "nba2k20_800/nba2k20_800_capture_context1.h"
@@ -68,6 +70,9 @@ namespace angle
 namespace
 {
 constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
+    {RestrictedTraceID::aliexpress,
+     {aliexpress::kReplayFrameStart, aliexpress::kReplayFrameEnd,
+      aliexpress::kReplayDrawSurfaceWidth, aliexpress::kReplayDrawSurfaceHeight, "aliexpress"}},
     {RestrictedTraceID::angry_birds_2_1500,
      {angry_birds_2_1500::kReplayFrameStart, angry_birds_2_1500::kReplayFrameEnd,
       angry_birds_2_1500::kReplayDrawSurfaceWidth, angry_birds_2_1500::kReplayDrawSurfaceHeight,
@@ -176,6 +181,10 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
      {marvel_contest_of_champions::kReplayFrameStart, marvel_contest_of_champions::kReplayFrameEnd,
       marvel_contest_of_champions::kReplayDrawSurfaceWidth,
       marvel_contest_of_champions::kReplayDrawSurfaceHeight, "marvel_contest_of_champions"}},
+    {RestrictedTraceID::messenger_lite,
+     {messenger_lite::kReplayFrameStart, messenger_lite::kReplayFrameEnd,
+      messenger_lite::kReplayDrawSurfaceWidth, messenger_lite::kReplayDrawSurfaceHeight,
+      "messenger_lite"}},
     {RestrictedTraceID::minecraft,
      {minecraft::kReplayFrameStart, minecraft::kReplayFrameEnd, minecraft::kReplayDrawSurfaceWidth,
       minecraft::kReplayDrawSurfaceHeight, "minecraft"}},
@@ -267,6 +276,9 @@ void ReplayFrame(RestrictedTraceID traceID, uint32_t frameIndex)
 {
     switch (traceID)
     {
+        case RestrictedTraceID::aliexpress:
+            aliexpress::ReplayContext1Frame(frameIndex);
+            break;
         case RestrictedTraceID::angry_birds_2_1500:
             angry_birds_2_1500::ReplayContext1Frame(frameIndex);
             break;
@@ -357,6 +369,9 @@ void ReplayFrame(RestrictedTraceID traceID, uint32_t frameIndex)
         case RestrictedTraceID::marvel_contest_of_champions:
             marvel_contest_of_champions::ReplayContext1Frame(frameIndex);
             break;
+        case RestrictedTraceID::messenger_lite:
+            messenger_lite::ReplayContext1Frame(frameIndex);
+            break;
         case RestrictedTraceID::minecraft:
             minecraft::ReplayContext2Frame(frameIndex);
             break;
@@ -431,6 +446,9 @@ void ResetReplay(RestrictedTraceID traceID)
 {
     switch (traceID)
     {
+        case RestrictedTraceID::aliexpress:
+            aliexpress::ResetContext1Replay();
+            break;
         case RestrictedTraceID::angry_birds_2_1500:
             angry_birds_2_1500::ResetContext1Replay();
             break;
@@ -521,6 +539,9 @@ void ResetReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::marvel_contest_of_champions:
             marvel_contest_of_champions::ResetContext1Replay();
             break;
+        case RestrictedTraceID::messenger_lite:
+            messenger_lite::ResetContext1Replay();
+            break;
         case RestrictedTraceID::minecraft:
             minecraft::ResetContext2Replay();
             break;
@@ -595,6 +616,9 @@ void SetupReplay(RestrictedTraceID traceID)
 {
     switch (traceID)
     {
+        case RestrictedTraceID::aliexpress:
+            aliexpress::SetupContext1Replay();
+            break;
         case RestrictedTraceID::angry_birds_2_1500:
             angry_birds_2_1500::SetupContext1Replay();
             break;
@@ -685,6 +709,9 @@ void SetupReplay(RestrictedTraceID traceID)
         case RestrictedTraceID::marvel_contest_of_champions:
             marvel_contest_of_champions::SetupContext1Replay();
             break;
+        case RestrictedTraceID::messenger_lite:
+            messenger_lite::SetupContext1Replay();
+            break;
         case RestrictedTraceID::minecraft:
             minecraft::SetupContext2Replay();
             break;
@@ -759,6 +786,9 @@ void SetBinaryDataDir(RestrictedTraceID traceID, const char *dataDir)
 {
     switch (traceID)
     {
+        case RestrictedTraceID::aliexpress:
+            aliexpress::SetBinaryDataDir(dataDir);
+            break;
         case RestrictedTraceID::angry_birds_2_1500:
             angry_birds_2_1500::SetBinaryDataDir(dataDir);
             break;
@@ -849,6 +879,9 @@ void SetBinaryDataDir(RestrictedTraceID traceID, const char *dataDir)
         case RestrictedTraceID::marvel_contest_of_champions:
             marvel_contest_of_champions::SetBinaryDataDir(dataDir);
             break;
+        case RestrictedTraceID::messenger_lite:
+            messenger_lite::SetBinaryDataDir(dataDir);
+            break;
         case RestrictedTraceID::minecraft:
             minecraft::SetBinaryDataDir(dataDir);
             break;
@@ -923,6 +956,9 @@ void SetBinaryDataDecompressCallback(RestrictedTraceID traceID, DecompressCallba
 {
     switch (traceID)
     {
+        case RestrictedTraceID::aliexpress:
+            aliexpress::SetBinaryDataDecompressCallback(callback);
+            break;
         case RestrictedTraceID::angry_birds_2_1500:
             angry_birds_2_1500::SetBinaryDataDecompressCallback(callback);
             break;
@@ -1012,6 +1048,9 @@ void SetBinaryDataDecompressCallback(RestrictedTraceID traceID, DecompressCallba
             break;
         case RestrictedTraceID::marvel_contest_of_champions:
             marvel_contest_of_champions::SetBinaryDataDecompressCallback(callback);
+            break;
+        case RestrictedTraceID::messenger_lite:
+            messenger_lite::SetBinaryDataDecompressCallback(callback);
             break;
         case RestrictedTraceID::minecraft:
             minecraft::SetBinaryDataDecompressCallback(callback);
