@@ -6,7 +6,7 @@
 
 // validationEGL.cpp: Validation functions for generic EGL entry point parameters
 
-#include "libANGLE/validationEGL.h"
+#include "libANGLE/validationEGL_autogen.h"
 
 #include "common/utilities.h"
 #include "libANGLE/Config.h"
@@ -3399,6 +3399,26 @@ bool ValidateCreateImage(const ValidationContext *val,
             }
             break;
 
+        case EGL_METAL_TEXTURE_ANGLE:
+            if (!displayExtensions.mtlTextureClientBuffer)
+            {
+                val->setError(EGL_BAD_PARAMETER,
+                              "EGL_ANGLE_metal_texture_client_buffer not supported.");
+                return false;
+            }
+
+            if (context != nullptr)
+            {
+                val->setError(EGL_BAD_CONTEXT, "ctx must be EGL_NO_CONTEXT.");
+                return false;
+            }
+
+            ANGLE_EGL_TRY_RETURN(
+                val->eglThread,
+                display->validateImageClientBuffer(context, target, buffer, attributes),
+                val->entryPoint, val->labeledObject, false);
+            break;
+
         default:
             val->setError(EGL_BAD_PARAMETER, "invalid target: 0x%X", target);
             return false;
@@ -4348,6 +4368,13 @@ bool ValidateSwapBuffersWithDamageKHR(const ValidationContext *val,
 
 bool ValidateWaitNative(const ValidationContext *val, const EGLint engine)
 {
+    if (val->eglThread->getDisplay() == nullptr)
+    {
+        // EGL spec says this about eglWaitNative -
+        //    eglWaitNative is ignored if there is no current EGL rendering context.
+        return true;
+    }
+
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, val->eglThread->getDisplay()));
 
     if (engine != EGL_CORE_NATIVE_ENGINE)
@@ -4982,6 +5009,27 @@ bool ValidateQuerySurface(const ValidationContext *val,
             }
             break;
 
+        case EGL_BUFFER_AGE_EXT:
+        {
+            if (!display->getExtensions().bufferAgeEXT)
+            {
+                val->setError(EGL_BAD_ATTRIBUTE,
+                              "EGL_BUFFER_AGE_EXT cannot be used without "
+                              "EGL_EXT_buffer_age support.");
+                return false;
+            }
+            gl::Context *context = val->eglThread->getContext();
+            if ((context == nullptr) || (context->getCurrentDrawSurface() != surface))
+            {
+                val->setError(EGL_BAD_SURFACE,
+                              "The surface must be current to the current context "
+                              "in order to query buffer age per extension "
+                              "EGL_EXT_buffer_age.");
+                return false;
+            }
+        }
+        break;
+
         default:
             val->setError(EGL_BAD_ATTRIBUTE, "Invalid surface attribute.");
             return false;
@@ -5013,6 +5061,16 @@ bool ValidateQueryContext(const ValidationContext *val,
                               "EGL_ROBUST_RESOURCE_INITIALIZATION_ANGLE cannot be "
                               "used without EGL_ANGLE_robust_resource_initialization "
                               "support.");
+                return false;
+            }
+            break;
+
+        case EGL_CONTEXT_PRIORITY_LEVEL_IMG:
+            if (!display->getExtensions().contextPriority)
+            {
+                val->setError(EGL_BAD_ATTRIBUTE,
+                              "Attribute EGL_CONTEXT_PRIORITY_LEVEL_IMG requires "
+                              "extension EGL_IMG_context_priority.");
                 return false;
             }
             break;
@@ -5611,6 +5669,13 @@ bool ValidateQueryDeviceAttribEXT(const ValidationContext *val,
                 return false;
             }
             break;
+        case EGL_METAL_DEVICE_ANGLE:
+            if (!device->getExtensions().deviceMetal)
+            {
+                val->setError(EGL_BAD_ATTRIBUTE);
+                return false;
+            }
+            break;
         case EGL_CGL_CONTEXT_ANGLE:
         case EGL_CGL_PIXEL_FORMAT_ANGLE:
             if (!device->getExtensions().deviceCGL)
@@ -5702,6 +5767,13 @@ bool ValidateQueryString(const ValidationContext *val, const Display *dpyPacked,
 
 bool ValidateWaitGL(const ValidationContext *val)
 {
+    if (val->eglThread->getDisplay() == nullptr)
+    {
+        // EGL spec says this about eglWaitGL -
+        //    eglWaitGL is ignored if there is no current EGL rendering context for OpenGL ES.
+        return true;
+    }
+
     ANGLE_VALIDATION_TRY(ValidateDisplay(val, val->eglThread->getDisplay()));
     return true;
 }
@@ -5718,6 +5790,15 @@ bool ValidateReleaseThread(const ValidationContext *val)
 
 bool ValidateWaitClient(const ValidationContext *val)
 {
+    if (val->eglThread->getDisplay() == nullptr)
+    {
+        // EGL spec says this about eglWaitClient -
+        //    If there is no current context for the current rendering API,
+        //    the function has no effect but still returns EGL_TRUE.
+        return true;
+    }
+
+    ANGLE_VALIDATION_TRY(ValidateDisplay(val, val->eglThread->getDisplay()));
     return true;
 }
 

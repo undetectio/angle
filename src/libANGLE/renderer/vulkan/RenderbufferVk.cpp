@@ -88,13 +88,15 @@ angle::Result RenderbufferVk::setStorageImpl(const gl::Context *context,
     const bool isRenderToTexture =
         mode == gl::MultisamplingMode::MultisampledRenderToTexture &&
         (!isDepthStencilFormat || renderer->getFeatures().supportsDepthStencilResolve.enabled);
+    const bool hasRenderToTextureEXT =
+        renderer->getFeatures().supportsMultisampledRenderToSingleSampled.enabled;
 
     const VkImageUsageFlags usage =
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
         VK_IMAGE_USAGE_SAMPLED_BIT |
         (isDepthStencilFormat ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
                               : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) |
-        (isRenderToTexture ? VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT : 0);
+        (isRenderToTexture && !hasRenderToTextureEXT ? VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT : 0);
 
     const uint32_t imageSamples = isRenderToTexture ? 1 : samples;
 
@@ -103,8 +105,7 @@ angle::Result RenderbufferVk::setStorageImpl(const gl::Context *context,
     VkExtent3D extents = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1u};
     ANGLE_TRY(mImage->initExternal(contextVk, gl::TextureType::_2D, extents, format, imageSamples,
                                    usage, vk::kVkImageCreateFlagsNone, vk::ImageLayout::Undefined,
-                                   nullptr, gl::LevelIndex(0), gl::LevelIndex(0), 1, 1, robustInit,
-                                   nullptr));
+                                   nullptr, gl::LevelIndex(0), 1, 1, robustInit, nullptr));
 
     VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     ANGLE_TRY(mImage->initMemory(contextVk, renderer->getMemoryProperties(), flags));
@@ -112,7 +113,7 @@ angle::Result RenderbufferVk::setStorageImpl(const gl::Context *context,
     // If multisampled render to texture, an implicit multisampled image is created which is used as
     // the color or depth/stencil attachment.  At the end of the render pass, this image is
     // automatically resolved into |mImage| and its contents are discarded.
-    if (isRenderToTexture)
+    if (isRenderToTexture && !hasRenderToTextureEXT)
     {
         mMultisampledImageViews.init(renderer);
 

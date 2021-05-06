@@ -4,8 +4,8 @@
 // found in the LICENSE file.
 //
 // TranslatorVulkan:
-//   A GLSL-based translator that outputs shaders that fit GL_KHR_vulkan_glsl.
-//   The shaders are then fed into glslang to spit out SPIR-V (libANGLE-side).
+//   A GLSL-based translator that outputs shaders that fit GL_KHR_vulkan_glsl and feeds them into
+//   glslang to spit out SPIR-V.
 //   See: https://www.khronos.org/registry/vulkan/specs/misc/GL_KHR_vulkan_glsl.txt
 //
 
@@ -19,11 +19,12 @@
 #include "compiler/translator/IntermNode.h"
 #include "compiler/translator/OutputVulkanGLSL.h"
 #include "compiler/translator/StaticType.h"
+#include "compiler/translator/glslang_wrapper.h"
 #include "compiler/translator/tree_ops/vulkan/FlagSamplersWithTexelFetch.h"
 #include "compiler/translator/tree_ops/vulkan/MonomorphizeUnsupportedFunctionsInVulkanGLSL.h"
-#include "compiler/translator/tree_ops/vulkan/NameEmbeddedUniformStructs.h"
 #include "compiler/translator/tree_ops/vulkan/RemoveAtomicCounterBuiltins.h"
 #include "compiler/translator/tree_ops/vulkan/RemoveInactiveInterfaceVariables.h"
+#include "compiler/translator/tree_ops/vulkan/ReplaceForShaderFramebufferFetch.h"
 #include "compiler/translator/tree_ops/vulkan/RewriteArrayOfArrayOfOpaqueUniforms.h"
 #include "compiler/translator/tree_ops/vulkan/RewriteAtomicCounters.h"
 #include "compiler/translator/tree_ops/vulkan/RewriteCubeMapSamplersAs2DArray.h"
@@ -31,6 +32,7 @@
 #include "compiler/translator/tree_ops/vulkan/RewriteInterpolateAtOffset.h"
 #include "compiler/translator/tree_ops/vulkan/RewriteR32fImages.h"
 #include "compiler/translator/tree_ops/vulkan/RewriteStructSamplers.h"
+#include "compiler/translator/tree_ops/vulkan/SeparateStructFromUniformDeclarations.h"
 #include "compiler/translator/tree_util/BuiltIn.h"
 #include "compiler/translator/tree_util/DriverUniform.h"
 #include "compiler/translator/tree_util/FindFunction.h"
@@ -48,125 +50,6 @@ namespace sh
 
 namespace
 {
-// This traverses nodes, find the struct ones and add their declarations to the sink. It also
-// removes the nodes from the tree as it processes them.
-class DeclareStructTypesTraverser : public TIntermTraverser
-{
-  public:
-    explicit DeclareStructTypesTraverser(TOutputVulkanGLSL *outputVulkanGLSL)
-        : TIntermTraverser(true, false, false), mOutputVulkanGLSL(outputVulkanGLSL)
-    {}
-
-    bool visitDeclaration(Visit visit, TIntermDeclaration *node) override
-    {
-        ASSERT(visit == PreVisit);
-
-        if (!mInGlobalScope)
-        {
-            return false;
-        }
-
-        const TIntermSequence &sequence = *(node->getSequence());
-        TIntermTyped *declarator        = sequence.front()->getAsTyped();
-        const TType &type               = declarator->getType();
-
-        if (type.isStructSpecifier())
-        {
-            const TStructure *structure = type.getStruct();
-
-            // Embedded structs should be parsed away by now.
-            ASSERT(structure->symbolType() != SymbolType::Empty);
-            mOutputVulkanGLSL->writeStructType(structure);
-
-            TIntermSymbol *symbolNode = declarator->getAsSymbolNode();
-            if (symbolNode && symbolNode->variable().symbolType() == SymbolType::Empty)
-            {
-                // Remove the struct specifier declaration from the tree so it isn't parsed again.
-                TIntermSequence emptyReplacement;
-                mMultiReplacements.emplace_back(getParentNode()->getAsBlock(), node,
-                                                std::move(emptyReplacement));
-            }
-        }
-
-        return false;
-    }
-
-  private:
-    TOutputVulkanGLSL *mOutputVulkanGLSL;
-};
-
-class DeclareDefaultUniformsTraverser : public TIntermTraverser
-{
-  public:
-    DeclareDefaultUniformsTraverser(TInfoSinkBase *sink,
-                                    ShHashFunction64 hashFunction,
-                                    NameMap *nameMap)
-        : TIntermTraverser(true, true, true),
-          mSink(sink),
-          mHashFunction(hashFunction),
-          mNameMap(nameMap),
-          mInDefaultUniform(false)
-    {}
-
-    bool visitDeclaration(Visit visit, TIntermDeclaration *node) override
-    {
-        const TIntermSequence &sequence = *(node->getSequence());
-
-        // TODO(jmadill): Compound declarations.
-        ASSERT(sequence.size() == 1);
-
-        TIntermTyped *variable = sequence.front()->getAsTyped();
-        const TType &type      = variable->getType();
-        bool isUniform         = type.getQualifier() == EvqUniform && !type.isInterfaceBlock() &&
-                         !IsOpaqueType(type.getBasicType());
-
-        if (visit == PreVisit)
-        {
-            if (isUniform)
-            {
-                (*mSink) << "    " << GetTypeName(type, mHashFunction, mNameMap) << " ";
-                mInDefaultUniform = true;
-            }
-        }
-        else if (visit == InVisit)
-        {
-            mInDefaultUniform = isUniform;
-        }
-        else if (visit == PostVisit)
-        {
-            if (isUniform)
-            {
-                (*mSink) << ";\n";
-
-                // Remove the uniform declaration from the tree so it isn't parsed again.
-                TIntermSequence emptyReplacement;
-                mMultiReplacements.emplace_back(getParentNode()->getAsBlock(), node,
-                                                std::move(emptyReplacement));
-            }
-
-            mInDefaultUniform = false;
-        }
-        return true;
-    }
-
-    void visitSymbol(TIntermSymbol *symbol) override
-    {
-        if (mInDefaultUniform)
-        {
-            const ImmutableString &name = symbol->variable().name();
-            ASSERT(!name.beginsWith("gl_"));
-            (*mSink) << HashName(&symbol->variable(), mHashFunction, mNameMap)
-                     << ArrayString(symbol->getType());
-        }
-    }
-
-  private:
-    TInfoSinkBase *mSink;
-    ShHashFunction64 mHashFunction;
-    NameMap *mNameMap;
-    bool mInDefaultUniform;
-};
-
 constexpr ImmutableString kFlippedPointCoordName = ImmutableString("flippedPointCoord");
 constexpr ImmutableString kFlippedFragCoordName  = ImmutableString("flippedFragCoord");
 
@@ -178,6 +61,126 @@ constexpr gl::ShaderMap<const char *> kDefaultUniformNames = {
     {gl::ShaderType::Fragment, vk::kDefaultUniformsNameFS},
     {gl::ShaderType::Compute, vk::kDefaultUniformsNameCS},
 };
+
+bool IsDefaultUniform(const TType &type)
+{
+    return type.getQualifier() == EvqUniform && type.getInterfaceBlock() == nullptr &&
+           !IsOpaqueType(type.getBasicType());
+}
+
+class ReplaceDefaultUniformsTraverser : public TIntermTraverser
+{
+  public:
+    ReplaceDefaultUniformsTraverser(const VariableReplacementMap &variableMap)
+        : TIntermTraverser(true, false, false), mVariableMap(variableMap)
+    {}
+
+    bool visitDeclaration(Visit visit, TIntermDeclaration *node) override
+    {
+        const TIntermSequence &sequence = *(node->getSequence());
+
+        TIntermTyped *variable = sequence.front()->getAsTyped();
+        const TType &type      = variable->getType();
+
+        if (IsDefaultUniform(type))
+        {
+            // Remove the uniform declaration.
+            TIntermSequence emptyReplacement;
+            mMultiReplacements.emplace_back(getParentNode()->getAsBlock(), node,
+                                            std::move(emptyReplacement));
+
+            return false;
+        }
+
+        return true;
+    }
+
+    void visitSymbol(TIntermSymbol *symbol) override
+    {
+        const TVariable &variable = symbol->variable();
+        const TType &type         = variable.getType();
+
+        if (!IsDefaultUniform(type) || variable.name().beginsWith("gl_"))
+        {
+            return;
+        }
+
+        ASSERT(mVariableMap.count(&variable) > 0);
+
+        queueReplacement(mVariableMap.at(&variable)->deepCopy(), OriginalNode::IS_DROPPED);
+    }
+
+  private:
+    const VariableReplacementMap &mVariableMap;
+};
+
+bool DeclareDefaultUniforms(TCompiler *compiler,
+                            TIntermBlock *root,
+                            TSymbolTable *symbolTable,
+                            gl::ShaderType shaderType)
+{
+    // First, collect all default uniforms and declare a uniform block.
+    TFieldList *uniformList = new TFieldList;
+    TVector<const TVariable *> uniformVars;
+
+    for (TIntermNode *node : *root->getSequence())
+    {
+        TIntermDeclaration *decl = node->getAsDeclarationNode();
+        if (decl == nullptr)
+        {
+            continue;
+        }
+
+        const TIntermSequence &sequence = *(decl->getSequence());
+
+        TIntermSymbol *symbol = sequence.front()->getAsSymbolNode();
+        if (symbol == nullptr)
+        {
+            continue;
+        }
+
+        const TType &type = symbol->getType();
+        if (IsDefaultUniform(type))
+        {
+            TType *fieldType = new TType(type);
+            fieldType->setPrecision(EbpUndefined);
+
+            uniformList->push_back(new TField(fieldType, symbol->getName(), symbol->getLine(),
+                                              symbol->variable().symbolType()));
+            uniformVars.push_back(&symbol->variable());
+        }
+    }
+
+    TLayoutQualifier layoutQualifier = TLayoutQualifier::Create();
+    layoutQualifier.blockStorage     = EbsStd140;
+    const TVariable *uniformBlock    = DeclareInterfaceBlock(
+        root, symbolTable, uniformList, EvqUniform, layoutQualifier, TMemoryQualifier::Create(), 0,
+        ImmutableString(kDefaultUniformNames[shaderType]), ImmutableString(""));
+
+    // Create a map from the uniform variables to new variables that reference the fields of the
+    // block.
+    VariableReplacementMap variableMap;
+    for (size_t fieldIndex = 0; fieldIndex < uniformVars.size(); ++fieldIndex)
+    {
+        const TVariable *variable = uniformVars[fieldIndex];
+
+        TType *replacementType = new TType(variable->getType());
+        replacementType->setPrecision(EbpUndefined);
+        replacementType->setInterfaceBlockField(uniformBlock->getType().getInterfaceBlock(),
+                                                fieldIndex);
+
+        TVariable *replacementVariable =
+            new TVariable(symbolTable, variable->name(), replacementType, variable->symbolType());
+
+        variableMap[variable] = new TIntermSymbol(replacementVariable);
+    }
+
+    // Finally transform the AST and make sure references to the uniforms are replaced with the new
+    // variables.
+    ReplaceDefaultUniformsTraverser defaultTraverser(variableMap);
+    root->traverse(&defaultTraverser);
+    return defaultTraverser.updateTree(compiler, root);
+}
 
 // Replaces a builtin variable with a version that is rotated and corrects the X and Y coordinates.
 ANGLE_NO_DISCARD bool RotateAndFlipBuiltinVariable(TCompiler *compiler,
@@ -268,17 +271,6 @@ ANGLE_NO_DISCARD bool ReplaceGLDepthRangeWithDriverUniform(TCompiler *compiler,
 
     // Use this variable instead of gl_DepthRange everywhere.
     return ReplaceVariableWithTyped(compiler, root, depthRangeVar, angleEmulatedDepthRangeRef);
-}
-
-ANGLE_NO_DISCARD bool AppendTransformFeedbackOutputToMain(TCompiler *compiler,
-                                                          TIntermBlock *root,
-                                                          TSymbolTable *symbolTable)
-{
-    TVariable *xfbPlaceholder = new TVariable(symbolTable, ImmutableString("@@ XFB-OUT @@"),
-                                              new TType(), SymbolType::AngleInternal);
-
-    // Append the assignment as a statement at the end of the shader.
-    return RunAtTheEndOfShader(compiler, root, new TIntermSymbol(xfbPlaceholder), symbolTable);
 }
 
 TVariable *AddANGLEPositionVaryingDeclaration(TIntermBlock *root,
@@ -441,6 +433,67 @@ ANGLE_NO_DISCARD bool AddXfbEmulationSupport(TCompiler *compiler,
     const size_t mainIndex = FindMainIndex(root);
     root->insertChildNodes(mainIndex, {functionDef});
 
+    // Generate the following function and place it before main().  This function will be filled
+    // with transform feedback capture code at link time.
+    //
+    //     void ANGLECaptureXfb()
+    //     {
+    //     }
+    const TType *voidType = StaticType::GetBasic<EbtVoid>();
+
+    // Create the function body, which is empty.
+    body = new TIntermBlock;
+
+    // Declare the function
+    TFunction *xfbCaptureFunction =
+        new TFunction(symbolTable, ImmutableString(vk::kXfbEmulationCaptureFunctionName),
+                      SymbolType::AngleInternal, voidType, false);
+
+    // Insert the function declaration before main().
+    root->insertChildNodes(mainIndex,
+                           {CreateInternalFunctionDefinitionNode(*xfbCaptureFunction, body)});
+
+    // Create the following logic and add it at the end of main():
+    //
+    //     if (ANGLEUniforms.xfbActiveUnpaused)
+    //     {
+    //         ANGLECaptureXfb();
+    //     }
+    //
+
+    // Create a reference ANGLEUniforms.xfbActiveUnpaused
+    TIntermBinary *xfbActiveUnpaused = driverUniforms->getXfbActiveUnpaused();
+
+    // ANGLEUniforms.xfbActiveUnpaused != 0
+    TIntermBinary *isXfbActiveUnpaused =
+        new TIntermBinary(EOpNotEqual, xfbActiveUnpaused, CreateUIntNode(0));
+
+    // Create the function call
+    TIntermAggregate *captureXfbCall =
+        TIntermAggregate::CreateFunctionCall(*xfbCaptureFunction, {});
+
+    TIntermBlock *captureXfbBlock = new TIntermBlock;
+    captureXfbBlock->appendStatement(captureXfbCall);
+
+    // Create a call to ANGLEGetXfbOffsets too, for the sole purpose of preventing it from being
+    // culled as unused by glslang.
+    TIntermSequence zero;
+    zero.push_back(CreateIndexNode(0));
+    TIntermSequence ivec4Zero;
+    ivec4Zero.push_back(TIntermAggregate::CreateConstructor(*ivec4Type, &zero));
+    TIntermAggregate *getOffsetsCall =
+        TIntermAggregate::CreateFunctionCall(*getOffsetsFunction, &ivec4Zero);
+    captureXfbBlock->appendStatement(getOffsetsCall);
+
+    // Create the if
+    TIntermIfElse *captureXfb = new TIntermIfElse(isXfbActiveUnpaused, captureXfbBlock, nullptr);
+
+    // Run it at the end of the shader.
+    if (!RunAtTheEndOfShader(compiler, root, captureXfb, symbolTable))
+    {
+        return false;
+    }
+
     // Additionally, generate the following storage buffer declarations used to capture transform
     // feedback output.  Again, there's a maximum of four buffers.
     //
@@ -477,8 +530,8 @@ ANGLE_NO_DISCARD bool AddXfbEmulationSupport(TCompiler *compiler,
         varName << vk::kXfbEmulationBufferName;
         varName.appendDecimal(bufferIndex);
 
-        DeclareInterfaceBlock(root, symbolTable, fieldList, EvqBuffer, TMemoryQualifier::Create(),
-                              0, blockName, varName);
+        DeclareInterfaceBlock(root, symbolTable, fieldList, EvqBuffer, TLayoutQualifier::Create(),
+                              TMemoryQualifier::Create(), 0, blockName, varName);
     }
 
     return compiler->validateAST(root);
@@ -711,15 +764,13 @@ TranslatorVulkan::TranslatorVulkan(sh::GLenum type, ShShaderSpec spec)
     : TCompiler(type, spec, SH_GLSL_450_CORE_OUTPUT)
 {}
 
-bool TranslatorVulkan::translateImpl(TIntermBlock *root,
+bool TranslatorVulkan::translateImpl(TInfoSinkBase &sink,
+                                     TIntermBlock *root,
                                      ShCompileOptions compileOptions,
                                      PerformanceDiagnostics * /*perfDiagnostics*/,
                                      SpecConst *specConst,
-                                     DriverUniform *driverUniforms,
-                                     TOutputVulkanGLSL *outputGLSL)
+                                     DriverUniform *driverUniforms)
 {
-    TInfoSinkBase &sink = getInfoSink().obj;
-
     if (getShaderType() == GL_VERTEX_SHADER)
     {
         if (!ShaderBuiltinsWorkaround(this, root, &getSymbolTable(), compileOptions))
@@ -788,7 +839,7 @@ bool TranslatorVulkan::translateImpl(TIntermBlock *root,
 
     if (aggregateTypesUsedForUniforms > 0)
     {
-        if (!NameEmbeddedStructUniforms(this, root, &getSymbolTable()))
+        if (!SeparateStructFromUniformDeclarations(this, root, &getSymbolTable()))
         {
             return false;
         }
@@ -800,14 +851,6 @@ bool TranslatorVulkan::translateImpl(TIntermBlock *root,
             return false;
         }
         defaultUniformCount -= removedUniformsCount;
-
-        // We must declare the struct types before using them.
-        DeclareStructTypesTraverser structTypesTraverser(outputGLSL);
-        root->traverse(&structTypesTraverser);
-        if (!structTypesTraverser.updateTree(this, root))
-        {
-            return false;
-        }
     }
 
     // Replace array of array of opaque uniforms with a flattened array.  This is run after
@@ -839,17 +882,10 @@ bool TranslatorVulkan::translateImpl(TIntermBlock *root,
 
     if (defaultUniformCount > 0)
     {
-        sink << "\nlayout(set=0, binding=" << outputGLSL->nextUnusedBinding()
-             << ", std140) uniform " << kDefaultUniformNames[packedShaderType] << "\n{\n";
-
-        DeclareDefaultUniformsTraverser defaultTraverser(&sink, getHashFunction(), &getNameMap());
-        root->traverse(&defaultTraverser);
-        if (!defaultTraverser.updateTree(this, root))
+        if (!DeclareDefaultUniforms(this, root, &getSymbolTable(), packedShaderType))
         {
             return false;
         }
-
-        sink << "};\n";
     }
 
     if (getShaderType() == GL_COMPUTE_SHADER)
@@ -950,24 +986,17 @@ bool TranslatorVulkan::translateImpl(TIntermBlock *root,
                 return false;
             }
         }
-
-        // Append a macro for transform feedback substitution prior to modifying depth.
-        if ((compileOptions & SH_ADD_VULKAN_XFB_EMULATION_SUPPORT_CODE) != 0)
-        {
-            if (!AppendTransformFeedbackOutputToMain(this, root, &getSymbolTable()))
-            {
-                return false;
-            }
-        }
     }
 
     switch (packedShaderType)
     {
         case gl::ShaderType::Fragment:
         {
-            bool usesPointCoord   = false;
-            bool usesFragCoord    = false;
-            bool usesSampleMaskIn = false;
+            bool usesPointCoord    = false;
+            bool usesFragCoord     = false;
+            bool usesSampleMaskIn  = false;
+            bool usesLastFragData  = false;
+            bool useSamplePosition = false;
 
             // Search for the gl_PointCoord usage, if its used, we need to flip the y coordinate.
             for (const ShaderVariable &inputVarying : mInputVaryings)
@@ -983,6 +1012,12 @@ bool TranslatorVulkan::translateImpl(TIntermBlock *root,
                     continue;
                 }
 
+                if (inputVarying.name == "gl_SamplePosition")
+                {
+                    useSamplePosition = true;
+                    continue;
+                }
+
                 if (inputVarying.name == "gl_PointCoord")
                 {
                     usesPointCoord = true;
@@ -992,6 +1027,12 @@ bool TranslatorVulkan::translateImpl(TIntermBlock *root,
                 if (inputVarying.name == "gl_FragCoord")
                 {
                     usesFragCoord = true;
+                    break;
+                }
+
+                if (inputVarying.name == "gl_LastFragData")
+                {
+                    usesLastFragData = true;
                     break;
                 }
             }
@@ -1094,6 +1135,32 @@ bool TranslatorVulkan::translateImpl(TIntermBlock *root,
                 }
             }
 
+            if (useSamplePosition)
+            {
+                TIntermTyped *flipXY = specConst->getFlipXY();
+                if (!flipXY)
+                {
+                    flipXY = driverUniforms->getFlipXYRef();
+                }
+                TIntermConstantUnion *pivot = CreateFloatNode(0.5f);
+                TIntermTyped *fragRotation  = nullptr;
+                if (usePreRotation)
+                {
+                    fragRotation = specConst->getFragRotationMatrix();
+                    if (!fragRotation)
+                    {
+                        fragRotation = driverUniforms->getFragRotationMatrixRef();
+                    }
+                }
+                if (!RotateAndFlipBuiltinVariable(this, root, GetMainSequence(root), flipXY,
+                                                  &getSymbolTable(),
+                                                  BuiltInVariable::gl_SamplePosition(),
+                                                  kFlippedPointCoordName, pivot, fragRotation))
+                {
+                    return false;
+                }
+            }
+
             if (usesFragCoord)
             {
                 if (!InsertFragCoordCorrection(this, compileOptions, root, GetMainSequence(root),
@@ -1101,6 +1168,16 @@ bool TranslatorVulkan::translateImpl(TIntermBlock *root,
                 {
                     return false;
                 }
+            }
+
+            if (usesLastFragData && !ReplaceLastFragData(this, root, &getSymbolTable(), &mUniforms))
+            {
+                return false;
+            }
+
+            if (!ReplaceInOutVariables(this, root, &getSymbolTable(), &mUniforms))
+            {
+                return false;
             }
 
             if (!RewriteDfdy(this, compileOptions, root, getSymbolTable(), getShaderVersion(),
@@ -1232,27 +1309,21 @@ bool TranslatorVulkan::translate(TIntermBlock *root,
                                  ShCompileOptions compileOptions,
                                  PerformanceDiagnostics *perfDiagnostics)
 {
-
-    TInfoSinkBase &sink = getInfoSink().obj;
+    TInfoSinkBase sink;
 
     bool precisionEmulation = false;
-    if (!emulatePrecisionIfNeeded(root, sink, &precisionEmulation, SH_GLSL_VULKAN_OUTPUT))
+    if (!emulatePrecisionIfNeeded(root, sink, &precisionEmulation, SH_SPIRV_VULKAN_OUTPUT))
         return false;
 
     bool enablePrecision = (compileOptions & SH_IGNORE_PRECISION_QUALIFIERS) == 0;
-
-    TOutputVulkanGLSL outputGLSL(sink, getArrayIndexClampingStrategy(), getHashFunction(),
-                                 getNameMap(), &getSymbolTable(), getShaderType(),
-                                 getShaderVersion(), getOutputType(), precisionEmulation,
-                                 enablePrecision, compileOptions);
 
     SpecConst specConst(&getSymbolTable(), compileOptions, getShaderType());
 
     if ((compileOptions & SH_USE_SPECIALIZATION_CONSTANT) != 0)
     {
         DriverUniform driverUniforms;
-        if (!translateImpl(root, compileOptions, perfDiagnostics, &specConst, &driverUniforms,
-                           &outputGLSL))
+        if (!translateImpl(sink, root, compileOptions, perfDiagnostics, &specConst,
+                           &driverUniforms))
         {
             return false;
         }
@@ -1260,22 +1331,38 @@ bool TranslatorVulkan::translate(TIntermBlock *root,
     else
     {
         DriverUniformExtended driverUniformsExt;
-        if (!translateImpl(root, compileOptions, perfDiagnostics, &specConst, &driverUniformsExt,
-                           &outputGLSL))
+        if (!translateImpl(sink, root, compileOptions, perfDiagnostics, &specConst,
+                           &driverUniformsExt))
         {
             return false;
         }
     }
 
     // Write translated shader.
+    TOutputVulkanGLSL outputGLSL(sink, getArrayIndexClampingStrategy(), getHashFunction(),
+                                 getNameMap(), &getSymbolTable(), getShaderType(),
+                                 getShaderVersion(), getOutputType(), precisionEmulation,
+                                 enablePrecision, compileOptions);
     root->traverse(&outputGLSL);
 
-    return true;
+    return compileToSpirv(sink);
 }
 
 bool TranslatorVulkan::shouldFlattenPragmaStdglInvariantAll()
 {
     // Not necessary.
     return false;
+}
+
+bool TranslatorVulkan::compileToSpirv(const TInfoSinkBase &glsl)
+{
+    std::vector<uint32_t> spirvBlob;
+    if (!GlslangCompileToSpirv(getResources(), getShaderType(), glsl.str(), &spirvBlob))
+    {
+        return false;
+    }
+
+    getInfoSink().obj.setBinary(std::move(spirvBlob));
+    return true;
 }
 }  // namespace sh

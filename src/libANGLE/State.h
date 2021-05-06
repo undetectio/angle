@@ -446,12 +446,28 @@ class State : angle::NonCopyable
 
     ANGLE_INLINE bool hasValidAtomicCounterBuffer() const
     {
-        return mValidAtomicCounterBufferCount > 0;
+        return mBoundAtomicCounterBuffersMask.any();
     }
 
     const OffsetBindingPointer<Buffer> &getIndexedUniformBuffer(size_t index) const;
     const OffsetBindingPointer<Buffer> &getIndexedAtomicCounterBuffer(size_t index) const;
     const OffsetBindingPointer<Buffer> &getIndexedShaderStorageBuffer(size_t index) const;
+
+    const angle::BitSet<gl::IMPLEMENTATION_MAX_UNIFORM_BUFFER_BINDINGS> &getUniformBuffersMask()
+        const
+    {
+        return mBoundUniformBuffersMask;
+    }
+    const angle::BitSet<gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS>
+        &getAtomicCounterBuffersMask() const
+    {
+        return mBoundAtomicCounterBuffersMask;
+    }
+    const angle::BitSet<gl::IMPLEMENTATION_MAX_SHADER_STORAGE_BUFFER_BINDINGS>
+        &getShaderStorageBuffersMask() const
+    {
+        return mBoundShaderStorageBuffersMask;
+    }
 
     // Detach a buffer from all bindings
     angle::Result detachBuffer(Context *context, const Buffer *buffer);
@@ -654,8 +670,8 @@ class State : angle::NonCopyable
         DIRTY_BIT_ATOMIC_COUNTER_BUFFER_BINDING,
         DIRTY_BIT_MULTISAMPLING,
         DIRTY_BIT_SAMPLE_ALPHA_TO_ONE,
-        DIRTY_BIT_COVERAGE_MODULATION,  // CHROMIUM_framebuffer_mixed_samples
-        DIRTY_BIT_FRAMEBUFFER_SRGB,     // GL_EXT_sRGB_write_control
+        DIRTY_BIT_COVERAGE_MODULATION,                  // CHROMIUM_framebuffer_mixed_samples
+        DIRTY_BIT_FRAMEBUFFER_SRGB_WRITE_CONTROL_MODE,  // GL_EXT_sRGB_write_control
         DIRTY_BIT_CURRENT_VALUES,
         DIRTY_BIT_PROVOKING_VERTEX,
         DIRTY_BIT_SAMPLE_SHADING,
@@ -890,6 +906,11 @@ class State : angle::NonCopyable
 
     const std::vector<ImageUnit> &getImageUnits() const { return mImageUnits; }
 
+    const ProgramPipelineManager *getProgramPipelineManagerForCapture() const
+    {
+        return mProgramPipelineManager;
+    }
+
   private:
     friend class Context;
 
@@ -1068,8 +1089,13 @@ class State : angle::NonCopyable
 
     BufferVector mUniformBuffers;
     BufferVector mAtomicCounterBuffers;
-    uint32_t mValidAtomicCounterBufferCount;
     BufferVector mShaderStorageBuffers;
+
+    angle::BitSet<gl::IMPLEMENTATION_MAX_UNIFORM_BUFFER_BINDINGS> mBoundUniformBuffersMask;
+    angle::BitSet<gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS>
+        mBoundAtomicCounterBuffersMask;
+    angle::BitSet<gl::IMPLEMENTATION_MAX_SHADER_STORAGE_BUFFER_BINDINGS>
+        mBoundShaderStorageBuffersMask;
 
     BindingPointer<TransformFeedback> mTransformFeedback;
 

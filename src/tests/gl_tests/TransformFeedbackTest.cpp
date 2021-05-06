@@ -373,6 +373,102 @@ TEST_P(TransformFeedbackTest, SpanMultipleRenderPasses)
     EXPECT_GL_NO_ERROR();
 }
 
+// Test that uploading data to buffer that's in use then using it for transform feedback works.
+TEST_P(TransformFeedbackTest, UseAsUBOThenUpdateThenCapture)
+{
+    // http://anglebug.com/5833
+    ANGLE_SKIP_TEST_IF(IsVulkan() && IsQualcomm());
+
+    // TODO(anglebug.com/4533) This fails after the upgrade to the 26.20.100.7870 driver.
+    ANGLE_SKIP_TEST_IF(IsWindows() && IsIntel() && IsVulkan());
+
+    // Fails on Mac GL drivers. http://anglebug.com/4992
+    ANGLE_SKIP_TEST_IF(IsOpenGL() && IsOSX());
+
+    const std::array<uint32_t, 12> kInitialData = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    const std::array<uint32_t, 12> kUpdateData  = {
+        0x12345678u, 0x9ABCDEF0u, 0x13579BDFu, 0x2468ACE0u, 0x23456781u, 0xABCDEF09u,
+        0x3579BDF1u, 0x468ACE02u, 0x34567812u, 0xBCDEF09Au, 0x579BDF13u, 0x68ACE024u,
+    };
+
+    GLBuffer buffer;
+    glBindBuffer(GL_UNIFORM_BUFFER, buffer);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(kInitialData), kInitialData.data(), GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, buffer);
+    EXPECT_GL_NO_ERROR();
+
+    constexpr char kVerifyUBO[] = R"(#version 300 es
+precision mediump float;
+uniform block {
+    uvec4 data[3];
+} ubo;
+out vec4 colorOut;
+void main()
+{
+    bool data0Ok = all(equal(ubo.data[0], uvec4(0, 1, 2, 3)));
+    bool data1Ok = all(equal(ubo.data[1], uvec4(4, 5, 6, 7)));
+    bool data2Ok = all(equal(ubo.data[2], uvec4(8, 9, 10, 11)));
+    if (data0Ok && data1Ok && data2Ok)
+        colorOut = vec4(0, 1.0, 0, 1.0);
+    else
+        colorOut = vec4(0, 0, 1.0, 1.0);
+})";
+
+    ANGLE_GL_PROGRAM(verifyUbo, essl3_shaders::vs::Simple(), kVerifyUBO);
+    drawQuad(verifyUbo, essl3_shaders::PositionAttrib(), 0.5);
+    EXPECT_GL_NO_ERROR();
+
+    // Update buffer data
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(kInitialData), kUpdateData.data());
+    EXPECT_GL_NO_ERROR();
+
+    // Set the program's transform feedback varyings (just gl_Position)
+    std::vector<std::string> tfVaryings;
+    tfVaryings.push_back("gl_Position");
+    compileDefaultProgram(tfVaryings, GL_INTERLEAVED_ATTRIBS);
+
+    glUseProgram(mProgram);
+
+    GLint positionLocation = glGetAttribLocation(mProgram, essl1_shaders::PositionAttrib());
+
+    // First pass: draw 3 points to the XFB buffer
+    glEnable(GL_RASTERIZER_DISCARD);
+
+    const GLfloat vertices[] = {
+        -1.0f, 3.0f, 0.5f, -1.0f, -1.0f, 0.5f, 3.0f, -1.0f, 0.5f,
+    };
+
+    glVertexAttribPointer(positionLocation, 3, GL_FLOAT, GL_FALSE, 0, vertices);
+    glEnableVertexAttribArray(positionLocation);
+
+    // Bind the buffer for transform feedback output and start transform feedback
+    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, buffer);
+    glBeginTransformFeedback(GL_POINTS);
+
+    glDrawArrays(GL_POINTS, 0, 3);
+
+    glDisableVertexAttribArray(positionLocation);
+    glVertexAttribPointer(positionLocation, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
+    glEndTransformFeedback();
+
+    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
+
+    glDisable(GL_RASTERIZER_DISCARD);
+
+    // Second pass: draw from the feedback buffer
+    glBindBuffer(GL_ARRAY_BUFFER, buffer);
+    glVertexAttribPointer(positionLocation, 4, GL_FLOAT, GL_FALSE, 0, 0);
+    glEnableVertexAttribArray(positionLocation);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    EXPECT_GL_NO_ERROR();
+
+    // Make sure both draws succeeded
+    EXPECT_PIXEL_COLOR_EQ(getWindowWidth() / 2, getWindowHeight() / 2, GLColor::yellow);
+}
+
 void TransformFeedbackTest::midRecordOpDoesNotContributeTest(std::function<void()> op)
 {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -751,6 +847,79 @@ TEST_P(TransformFeedbackTest, VertexOnly)
     EXPECT_GL_NO_ERROR();
 }
 
+// Test that we can link inactive structure type vayrings with xfb and capture varyings only used in
+// the vertex shader.
+TEST_P(TransformFeedbackTest, InactiveStructureVarying)
+{
+    // TODO(anglebug.com/4533) This fails after the upgrade to the 26.20.100.7870 driver.
+    ANGLE_SKIP_TEST_IF(IsWindows() && IsIntel() && IsVulkan());
+
+    constexpr char kVS[] =
+        R"(#version 300 es
+        in vec2 position;
+        in float attrib;
+        flat out struct
+        {
+            int test1;
+            float test2;
+        } outStruct;
+        out float varyingAttrib;
+        void main() {
+          gl_Position = vec4(position, 0, 1);
+          varyingAttrib = attrib;
+        })";
+
+    constexpr char kFS[] =
+        R"(#version 300 es
+        out mediump vec4 color;
+        void main() {
+          color = vec4(0.0, 1.0, 0.0, 1.0);
+        })";
+
+    std::vector<std::string> tfVaryings;
+    tfVaryings.push_back("varyingAttrib");
+
+    mProgram = CompileProgramWithTransformFeedback(kVS, kFS, tfVaryings, GL_INTERLEAVED_ATTRIBS);
+    ASSERT_NE(0u, mProgram);
+
+    glUseProgram(mProgram);
+
+    glBindTransformFeedback(GL_TRANSFORM_FEEDBACK, mTransformFeedback);
+    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, mTransformFeedbackBuffer);
+
+    std::vector<float> attribData;
+    for (unsigned int cnt = 0; cnt < 100; ++cnt)
+    {
+        attribData.push_back(static_cast<float>(cnt));
+    }
+
+    GLint attribLocation = glGetAttribLocation(mProgram, "attrib");
+    ASSERT_NE(-1, attribLocation);
+
+    glVertexAttribPointer(attribLocation, 1, GL_FLOAT, GL_FALSE, 4, &attribData[0]);
+    glEnableVertexAttribArray(attribLocation);
+
+    glBeginTransformFeedback(GL_TRIANGLES);
+    drawQuad(mProgram, "position", 0.5f);
+    glEndTransformFeedback();
+    ASSERT_GL_NO_ERROR();
+
+    glUseProgram(0);
+
+    void *mappedBuffer =
+        glMapBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER, 0, sizeof(float) * 6, GL_MAP_READ_BIT);
+    ASSERT_NE(nullptr, mappedBuffer);
+
+    float *mappedFloats = static_cast<float *>(mappedBuffer);
+    for (unsigned int cnt = 0; cnt < 6; ++cnt)
+    {
+        EXPECT_EQ(attribData[cnt], mappedFloats[cnt]);
+    }
+    glUnmapBuffer(GL_TRANSFORM_FEEDBACK_BUFFER);
+
+    EXPECT_GL_NO_ERROR();
+}
+
 // Test that multiple paused transform feedbacks do not generate errors or crash
 TEST_P(TransformFeedbackTest, MultiplePaused)
 {
@@ -851,6 +1020,9 @@ TEST_P(TransformFeedbackTest, MultiContext)
 
     // Flaky on Win Intel Vulkan. http://anglebug.com/4497
     ANGLE_SKIP_TEST_IF(IsWindows() && IsIntel() && IsVulkan());
+
+    // Flaky on Metal. http://anglebug.com/5713
+    ANGLE_SKIP_TEST_IF(IsMetal());
 
     EGLint contextAttributes[] = {
         EGL_CONTEXT_MAJOR_VERSION_KHR,
@@ -2919,7 +3091,7 @@ TEST_P(TransformFeedbackTestES31, IOBlocksSeparate)
     ANGLE_SKIP_TEST_IF(IsQualcomm() && IsOpenGLES());
 
     // http://anglebug.com/5493
-    ANGLE_SKIP_TEST_IF(IsLinux() && IsAMD() && IsVulkan());
+    ANGLE_SKIP_TEST_IF(IsLinux() && (IsAMD() || IsARM()) && IsVulkan());
 
     constexpr char kVS[] = R"(#version 310 es
 #extension GL_EXT_shader_io_blocks : require
@@ -3005,17 +3177,18 @@ void main()
     }
 }
 
-// Use this to select which configurations (e.g. which renderer, which GLES major version) these
-// tests should be run against.
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(TransformFeedbackTest);
 ANGLE_INSTANTIATE_TEST_ES3(TransformFeedbackTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(TransformFeedbackLifetimeTest);
 ANGLE_INSTANTIATE_TEST_ES3(TransformFeedbackLifetimeTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(TransformFeedbackTestES31);
 ANGLE_INSTANTIATE_TEST_ES31(TransformFeedbackTestES31);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(TransformFeedbackTestES32);
 ANGLE_INSTANTIATE_TEST_ES32(TransformFeedbackTestES32);
 
-ANGLE_INSTANTIATE_TEST(TransformFeedbackWithDepthBufferTest, ES3_METAL());
-
-// These test suites are not instantiated on some OSes.
-GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(TransformFeedbackTestES32);
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(TransformFeedbackWithDepthBufferTest);
-
+ANGLE_INSTANTIATE_TEST(TransformFeedbackWithDepthBufferTest, ES3_METAL());
 }  // anonymous namespace

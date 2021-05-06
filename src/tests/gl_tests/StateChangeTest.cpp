@@ -968,7 +968,7 @@ TEST_P(StateChangeTest, VertexBufferUpdatedAfterDraw)
 }
 
 // Tests that drawing after flush without any state change works.
-TEST_P(StateChangeTest, DrawAfterFlushWithNoStateChange)
+TEST_P(StateChangeTestES3, DrawAfterFlushWithNoStateChange)
 {
     // Draw (0.125, 0.25, 0.5, 0.5) once, using additive blend
     ANGLE_GL_PROGRAM(drawColor, essl1_shaders::vs::Simple(), essl1_shaders::fs::UniformColor());
@@ -4157,6 +4157,8 @@ TEST_P(SimpleStateChangeTestES31, DrawWithTextureThenDrawWithImage)
 {
     // http://anglebug.com/5593
     ANGLE_SKIP_TEST_IF(IsD3D11());
+    // http://anglebug.com/5686
+    ANGLE_SKIP_TEST_IF(IsWindows() && IsIntel() && IsDesktopOpenGL());
 
     GLint maxFragmentImageUniforms;
     glGetIntegerv(GL_MAX_FRAGMENT_IMAGE_UNIFORMS, &maxFragmentImageUniforms);
@@ -4240,7 +4242,7 @@ void main()
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
-    glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
     glUseProgram(writeProgram);
     glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -4341,7 +4343,7 @@ void main()
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
-    glMemoryBarrier(GL_UNIFORM_BARRIER_BIT);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     glUseProgram(writeProgram);
     glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -4435,6 +4437,149 @@ void main()
     EXPECT_EQ(ptr[1], 0.0f);
     EXPECT_EQ(ptr[2], 0.0f);
     EXPECT_EQ(ptr[3], 1.0f);
+
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+}
+
+// Tests that clearing a texture followed by sampling from it in a dispatch call works correctly.
+// In the Vulkan backend, the clear is deferred and should be flushed correctly.
+TEST_P(SimpleStateChangeTestES31, ClearThenSampleWithCompute)
+{
+    // http://anglebug.com/5687
+    ANGLE_SKIP_TEST_IF(IsLinux() && IsAMD() && IsDesktopOpenGL());
+
+    constexpr GLsizei kSize = 1;
+
+    GLTexture color;
+    glBindTexture(GL_TEXTURE_2D, color);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, kSize, kSize);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, &GLColor::red);
+    EXPECT_GL_NO_ERROR();
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    EXPECT_GL_NO_ERROR();
+
+    // Make sure the update to the texture is effective.
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+
+    // Clear the texture through the framebuffer
+    glClearColor(0, 1.0f, 0, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    constexpr std::array<float, 4> kBufferInitValue = {0.123f, 0.456f, 0.789f, 0.852f};
+    GLBuffer buffer;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(kBufferInitValue), kBufferInitValue.data(),
+                 GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, buffer);
+    EXPECT_GL_NO_ERROR();
+
+    constexpr char kCS[] = R"(#version 310 es
+layout(local_size_x=1, local_size_y=1) in;
+uniform sampler2D tex;
+layout(binding = 0, std430) buffer Output {
+    vec4 vec;
+} b;
+void main()
+{
+    b.vec = texelFetch(tex, ivec2(gl_LocalInvocationID.xy), 0);
+})";
+
+    ANGLE_GL_COMPUTE_PROGRAM(readProgram, kCS);
+    glUseProgram(readProgram);
+
+    glActiveTexture(GL_TEXTURE0);
+    glUniform1i(glGetUniformLocation(readProgram, "tex"), 0);
+
+    glUseProgram(readProgram);
+    glDispatchCompute(1, 1, 1);
+
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+    EXPECT_GL_NO_ERROR();
+
+    // Verify the clear
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+
+    // Verify the output from the compute shader
+    const float *ptr = reinterpret_cast<const float *>(
+        glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(kBufferInitValue), GL_MAP_READ_BIT));
+
+    EXPECT_EQ(ptr[0], 0.0f);
+    EXPECT_EQ(ptr[1], 1.0f);
+    EXPECT_EQ(ptr[2], 0.0f);
+    EXPECT_EQ(ptr[3], 1.0f);
+
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+}
+
+// Tests that writing to a buffer with transform feedback in one draw call followed by reading from
+// it in a dispatch call works correctly.  This requires an implicit barrier in between the calls.
+TEST_P(SimpleStateChangeTestES31, TransformFeedbackThenReadWithCompute)
+{
+    // http://anglebug.com/5687
+    ANGLE_SKIP_TEST_IF(IsAMD() && IsVulkan());
+
+    constexpr GLsizei kBufferSize = sizeof(float) * 4 * 6;
+    GLBuffer buffer;
+    glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, buffer);
+    glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER, kBufferSize, nullptr, GL_STATIC_DRAW);
+    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, buffer);
+
+    std::vector<std::string> tfVaryings = {"gl_Position"};
+    ANGLE_GL_PROGRAM_TRANSFORM_FEEDBACK(program, essl3_shaders::vs::Simple(),
+                                        essl3_shaders::fs::Green(), tfVaryings,
+                                        GL_INTERLEAVED_ATTRIBS);
+    glUseProgram(program);
+
+    glBeginTransformFeedback(GL_TRIANGLES);
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.0f);
+    glEndTransformFeedback();
+
+    constexpr char kCS[] = R"(#version 310 es
+layout(local_size_x=1, local_size_y=1) in;
+layout(binding = 0) uniform Input
+{
+    vec4 data[3];
+};
+layout(binding = 0, std430) buffer Output {
+    bool pass;
+};
+void main()
+{
+    pass = data[0] == vec4(-1, 1, 0, 1) &&
+           data[1] == vec4(-1, -1, 0, 1) &&
+           data[2] == vec4(1, -1, 0, 1);
+})";
+
+    ANGLE_GL_COMPUTE_PROGRAM(readProgram, kCS);
+    glUseProgram(readProgram);
+
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, buffer);
+
+    constexpr GLsizei kResultSize = sizeof(uint32_t);
+    GLBuffer resultBuffer;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, resultBuffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, kResultSize, nullptr, GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, resultBuffer);
+
+    glDispatchCompute(1, 1, 1);
+
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+    EXPECT_GL_NO_ERROR();
+
+    // Verify the output of rendering
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+
+    // Verify the output from the compute shader
+    const uint32_t *ptr = reinterpret_cast<const uint32_t *>(
+        glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, kResultSize, GL_MAP_READ_BIT));
+
+    EXPECT_EQ(ptr[0], 1u);
 
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
@@ -6520,16 +6665,41 @@ TEST_P(WebGL2ValidationStateChangeTest, DrawElementsEmptyVertexArray)
 ANGLE_INSTANTIATE_TEST_ES2(StateChangeTest);
 ANGLE_INSTANTIATE_TEST_ES2(LineLoopStateChangeTest);
 ANGLE_INSTANTIATE_TEST_ES2(StateChangeRenderTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(StateChangeTestES3);
 ANGLE_INSTANTIATE_TEST_ES3(StateChangeTestES3);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(StateChangeRenderTestES3);
 ANGLE_INSTANTIATE_TEST_ES3(StateChangeRenderTestES3);
+
 ANGLE_INSTANTIATE_TEST_ES2(SimpleStateChangeTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SimpleStateChangeTestES3);
 ANGLE_INSTANTIATE_TEST_ES3(SimpleStateChangeTestES3);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ImageRespecificationTest);
 ANGLE_INSTANTIATE_TEST_ES3(ImageRespecificationTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SimpleStateChangeTestES31);
 ANGLE_INSTANTIATE_TEST_ES31(SimpleStateChangeTestES31);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SimpleStateChangeTestComputeES31);
 ANGLE_INSTANTIATE_TEST_ES31(SimpleStateChangeTestComputeES31);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SimpleStateChangeTestComputeES31PPO);
 ANGLE_INSTANTIATE_TEST_ES31(SimpleStateChangeTestComputeES31PPO);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ValidationStateChangeTest);
 ANGLE_INSTANTIATE_TEST_ES3(ValidationStateChangeTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(WebGL2ValidationStateChangeTest);
 ANGLE_INSTANTIATE_TEST_ES3(WebGL2ValidationStateChangeTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(RobustBufferAccessWebGL2ValidationStateChangeTest);
 ANGLE_INSTANTIATE_TEST_ES3(RobustBufferAccessWebGL2ValidationStateChangeTest);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ValidationStateChangeTestES31);
 ANGLE_INSTANTIATE_TEST_ES31(ValidationStateChangeTestES31);
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(WebGLComputeValidationStateChangeTest);
 ANGLE_INSTANTIATE_TEST_ES31(WebGLComputeValidationStateChangeTest);

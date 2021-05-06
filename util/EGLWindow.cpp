@@ -159,10 +159,21 @@ bool EGLWindow::initializeDisplay(OSWindow *osWindow,
         displayAttributes.push_back(params.debugLayersEnabled);
     }
 
+    const bool hasFeatureVirtualizationANGLE =
+        strstr(extensionString, "EGL_ANGLE_platform_angle_context_virtualization") != nullptr;
+
     if (params.contextVirtualization != EGL_DONT_CARE)
     {
-        displayAttributes.push_back(EGL_PLATFORM_ANGLE_CONTEXT_VIRTUALIZATION_ANGLE);
-        displayAttributes.push_back(params.contextVirtualization);
+        if (hasFeatureVirtualizationANGLE)
+        {
+            displayAttributes.push_back(EGL_PLATFORM_ANGLE_CONTEXT_VIRTUALIZATION_ANGLE);
+            displayAttributes.push_back(params.contextVirtualization);
+        }
+        else
+        {
+            fprintf(stderr,
+                    "EGL_ANGLE_platform_angle_context_virtualization extension not active\n");
+        }
     }
 
     if (params.platformMethods)
@@ -250,6 +261,11 @@ bool EGLWindow::initializeDisplay(OSWindow *osWindow,
     if (params.forceBufferGPUStorageFeatureMtl == EGL_TRUE)
     {
         enabledFeatureOverrides.push_back("force_buffer_gpu_storage_mtl");
+    }
+
+    if (params.emulatedVAOs == EGL_TRUE)
+    {
+        enabledFeatureOverrides.push_back("sync_vertex_arrays_to_default");
     }
 
     const bool hasFeatureControlANGLE =
@@ -515,7 +531,9 @@ EGLContext EGLWindow::createContext(EGLContext share) const
             contextAttributes.push_back(mConfigParams.debug ? EGL_TRUE : EGL_FALSE);
         }
 
-        if (hasKHRCreateContextNoError)
+        // TODO (http://anglebug.com/5809)
+        // Mesa does not allow EGL_CONTEXT_OPENGL_NO_ERROR_KHR for GLES1.
+        if (hasKHRCreateContextNoError && mConfigParams.noError)
         {
             contextAttributes.push_back(EGL_CONTEXT_OPENGL_NO_ERROR_KHR);
             contextAttributes.push_back(mConfigParams.noError ? EGL_TRUE : EGL_FALSE);

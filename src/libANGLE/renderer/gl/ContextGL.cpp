@@ -115,12 +115,23 @@ BufferImpl *ContextGL::createBuffer(const gl::BufferState &state)
 
 VertexArrayImpl *ContextGL::createVertexArray(const gl::VertexArrayState &data)
 {
-    const FunctionsGL *functions = getFunctions();
+    const angle::FeaturesGL &features = getFeaturesGL();
 
-    GLuint vao = 0;
-    functions->genVertexArrays(1, &vao);
+    if (features.syncVertexArraysToDefault.enabled)
+    {
+        StateManagerGL *stateManager = getStateManager();
 
-    return new VertexArrayGL(data, vao);
+        return new VertexArrayGL(data, stateManager->getDefaultVAO(),
+                                 stateManager->getDefaultVAOState());
+    }
+    else
+    {
+        const FunctionsGL *functions = getFunctions();
+
+        GLuint vao = 0;
+        functions->genVertexArrays(1, &vao);
+        return new VertexArrayGL(data, vao);
+    }
 }
 
 QueryImpl *ContextGL::createQuery(gl::QueryType type)
@@ -210,7 +221,9 @@ ANGLE_INLINE angle::Result ContextGL::setDrawArraysState(const gl::Context *cont
                                                          GLsizei count,
                                                          GLsizei instanceCount)
 {
-    if (context->getStateCache().hasAnyActiveClientAttrib())
+    const angle::FeaturesGL &features = getFeaturesGL();
+    if (context->getStateCache().hasAnyActiveClientAttrib() ||
+        (features.shiftInstancedArrayDataWithExtraOffset.enabled && first > 0))
     {
         const gl::State &glState                = context->getState();
         const gl::ProgramExecutable *executable = getState().getProgramExecutable();
@@ -224,8 +237,16 @@ ANGLE_INLINE angle::Result ContextGL::setDrawArraysState(const gl::Context *cont
         vaoGL->validateState(context);
 #endif  // ANGLE_STATE_VALIDATION_ENABLED
     }
+    else if (features.shiftInstancedArrayDataWithExtraOffset.enabled && first == 0)
+    {
+        // There could be previous draw call that has modified the attributes
+        // Instead of forcefully streaming attributes, we just rebind the original ones
+        const gl::State &glState   = context->getState();
+        const gl::VertexArray *vao = glState.getVertexArray();
+        const VertexArrayGL *vaoGL = GetImplAs<VertexArrayGL>(vao);
+        vaoGL->recoverForcedStreamingAttributesForDrawArraysInstanced(context);
+    }
 
-    const angle::FeaturesGL &features = getFeaturesGL();
     if (features.setPrimitiveRestartFixedIndexForDrawArrays.enabled)
     {
         StateManagerGL *stateManager           = getStateManager();
@@ -248,6 +269,15 @@ ANGLE_INLINE angle::Result ContextGL::setDrawElementsState(const gl::Context *co
     const gl::VertexArray *vao              = glState.getVertexArray();
     const gl::StateCache &stateCache        = context->getStateCache();
 
+    const angle::FeaturesGL &features = getFeaturesGL();
+    if (features.shiftInstancedArrayDataWithExtraOffset.enabled)
+    {
+        // There might be instanced arrays that are forced streaming for drawArraysInstanced
+        // They cannot be ELEMENT_ARRAY_BUFFER
+        const VertexArrayGL *vaoGL = GetImplAs<VertexArrayGL>(vao);
+        vaoGL->recoverForcedStreamingAttributesForDrawArraysInstanced(context);
+    }
+
     if (stateCache.hasAnyActiveClientAttrib() || vao->getElementArrayBuffer() == nullptr)
     {
         const VertexArrayGL *vaoGL = GetImplAs<VertexArrayGL>(vao);
@@ -260,7 +290,6 @@ ANGLE_INLINE angle::Result ContextGL::setDrawElementsState(const gl::Context *co
         *outIndices = indices;
     }
 
-    const angle::FeaturesGL &features = getFeaturesGL();
     if (glState.isPrimitiveRestartEnabled() && features.emulatePrimitiveRestartFixedIndex.enabled)
     {
         StateManagerGL *stateManager = getStateManager();
@@ -814,6 +843,15 @@ angle::Result ContextGL::onMakeCurrent(const gl::Context *context)
 {
     // Queries need to be paused/resumed on context switches
     return mRenderer->getStateManager()->onMakeCurrent(context);
+}
+
+angle::Result ContextGL::onUnMakeCurrent(const gl::Context *context)
+{
+    if (getFeaturesGL().unbindFBOOnContextSwitch.enabled)
+    {
+        mRenderer->getStateManager()->bindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    return ContextImpl::onUnMakeCurrent(context);
 }
 
 gl::Caps ContextGL::getNativeCaps() const

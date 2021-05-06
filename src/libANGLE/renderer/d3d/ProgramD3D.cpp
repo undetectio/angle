@@ -222,10 +222,10 @@ class UniformEncodingVisitorD3D : public sh::BlockEncoderVisitor
           mUniformMapOut(uniformMapOut)
     {}
 
-    void visitNamedSamplerOrImage(const sh::ShaderVariable &sampler,
-                                  const std::string &name,
-                                  const std::string &mappedName,
-                                  const std::vector<unsigned int> &arraySizes) override
+    void visitNamedOpaqueObject(const sh::ShaderVariable &sampler,
+                                const std::string &name,
+                                const std::string &mappedName,
+                                const std::vector<unsigned int> &arraySizes) override
     {
         auto uniformMapEntry = mUniformMapOut->find(name);
         if (uniformMapEntry == mUniformMapOut->end())
@@ -1065,7 +1065,7 @@ std::unique_ptr<rx::LinkEvent> ProgramD3D::load(const gl::Context *context,
         mImage2DUniforms.push_back(image2Duniform);
     }
 
-    for (unsigned int ii = 0; ii < gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS; ++ii)
+    for (unsigned int ii = 0; ii < gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS; ++ii)
     {
         unsigned int index                             = stream->readInt<unsigned int>();
         mComputeAtomicCounterBufferRegisterIndices[ii] = index;
@@ -1381,7 +1381,7 @@ void ProgramD3D::save(const gl::Context *context, gl::BinaryOutputStream *stream
         gl::WriteShaderVar(stream, image2DUniform);
     }
 
-    for (unsigned int ii = 0; ii < gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS; ++ii)
+    for (unsigned int ii = 0; ii < gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS; ++ii)
     {
         stream->writeInt(mComputeAtomicCounterBufferRegisterIndices[ii]);
     }

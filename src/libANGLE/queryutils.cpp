@@ -2487,6 +2487,7 @@ unsigned int GetLightModelParameterCount(GLenum pname)
         case GL_LIGHT_MODEL_TWO_SIDE:
             return 1;
         default:
+            UNREACHABLE();
             return 0;
     }
 }
@@ -2497,6 +2498,7 @@ unsigned int GetLightParameterCount(LightParameter pname)
     {
         case LightParameter::Ambient:
         case LightParameter::Diffuse:
+        case LightParameter::AmbientAndDiffuse:
         case LightParameter::Specular:
         case LightParameter::Position:
             return 4;
@@ -2509,6 +2511,7 @@ unsigned int GetLightParameterCount(LightParameter pname)
         case LightParameter::QuadraticAttenuation:
             return 1;
         default:
+            UNREACHABLE();
             return 0;
     }
 }
@@ -2519,12 +2522,14 @@ unsigned int GetMaterialParameterCount(MaterialParameter pname)
     {
         case MaterialParameter::Ambient:
         case MaterialParameter::Diffuse:
+        case MaterialParameter::AmbientAndDiffuse:
         case MaterialParameter::Specular:
         case MaterialParameter::Emission:
             return 4;
         case MaterialParameter::Shininess:
             return 1;
         default:
+            UNREACHABLE();
             return 0;
     }
 }
@@ -4155,6 +4160,7 @@ void QueryContextAttrib(const gl::Context *context, EGLint attribute, EGLint *va
 }
 
 egl::Error QuerySurfaceAttrib(const Display *display,
+                              const gl::Context *context,
                               const Surface *surface,
                               EGLint attribute,
                               EGLint *value)
@@ -4252,6 +4258,9 @@ egl::Error QuerySurfaceAttrib(const Display *display,
             break;
         case EGL_TIMESTAMPS_ANDROID:
             *value = surface->isTimestampsEnabled();
+            break;
+        case EGL_BUFFER_AGE_EXT:
+            ANGLE_TRY(surface->getBufferAge(context, value));
             break;
         default:
             UNREACHABLE();

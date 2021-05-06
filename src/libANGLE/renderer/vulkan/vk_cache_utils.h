@@ -35,16 +35,12 @@ namespace rx
 // - Set 3 contains all other shader resources, such as uniform and storage blocks, atomic counter
 //   buffers, images and image buffers.
 
-// ANGLE driver uniforms set index (binding is always 0):
-enum DescriptorSetIndex : uint32_t
+enum class DescriptorSetIndex : uint32_t
 {
-    // All internal shaders assume there is only one descriptor set, indexed at 0
-    InternalShader = 0,
-
-    DriverUniforms = 0,  // ANGLE driver uniforms set index
-    UniformsAndXfb,      // Uniforms set index
-    Texture,             // Textures set index
-    ShaderResource,      // Other shader resources set index
+    Internal,        // ANGLE driver uniforms or internal shaders
+    UniformsAndXfb,  // Uniforms set index
+    Texture,         // Textures set index
+    ShaderResource,  // Other shader resources set index
 
     InvalidEnum,
     EnumCount = InvalidEnum,
@@ -161,11 +157,13 @@ class alignas(4) RenderPassDesc final
     void packColorUnresolveAttachment(size_t colorIndexGL);
     void removeColorUnresolveAttachment(size_t colorIndexGL);
     // Indicate that a depth/stencil attachment should have a corresponding resolve attachment.
-    void packDepthStencilResolveAttachment(bool resolveDepth, bool resolveStencil);
+    void packDepthStencilResolveAttachment();
     // Indicate that a depth/stencil attachment should take its data from the resolve attachment
     // initially.
     void packDepthStencilUnresolveAttachment(bool unresolveDepth, bool unresolveStencil);
     void removeDepthStencilUnresolveAttachment();
+
+    void setWriteControlMode(gl::SrgbWriteControlMode mode);
 
     size_t hash() const;
 
@@ -189,15 +187,7 @@ class alignas(4) RenderPassDesc final
     }
     bool hasDepthStencilResolveAttachment() const
     {
-        return (mAttachmentFormats.back() & (kResolveDepthFlag | kResolveStencilFlag)) != 0;
-    }
-    bool hasDepthResolveAttachment() const
-    {
-        return (mAttachmentFormats.back() & kResolveDepthFlag) != 0;
-    }
-    bool hasStencilResolveAttachment() const
-    {
-        return (mAttachmentFormats.back() & kResolveStencilFlag) != 0;
+        return (mAttachmentFormats.back() & kResolveDepthStencilFlag) != 0;
     }
     bool hasDepthStencilUnresolveAttachment() const
     {
@@ -211,6 +201,12 @@ class alignas(4) RenderPassDesc final
     {
         return (mAttachmentFormats.back() & kUnresolveStencilFlag) != 0;
     }
+    gl::SrgbWriteControlMode getSRGBWriteControlMode() const
+    {
+        return ((mAttachmentFormats.back() & kSrgbWriteControlFlag) != 0)
+                   ? gl::SrgbWriteControlMode::Linear
+                   : gl::SrgbWriteControlMode::Default;
+    }
 
     // Get the number of attachments in the Vulkan render pass, i.e. after removing disabled
     // color attachments.
@@ -222,6 +218,9 @@ class alignas(4) RenderPassDesc final
 
     void setFramebufferFetchMode(bool hasFramebufferFetch);
     bool getFramebufferFetchMode() const { return mHasFramebufferFetch; }
+
+    void updateRenderToTexture(bool isRenderToTexture);
+    bool isRenderToTexture() const { return (mAttachmentFormats.back() & kIsRenderToTexture) != 0; }
 
     angle::FormatID operator[](size_t index) const
     {
@@ -244,17 +243,14 @@ class alignas(4) RenderPassDesc final
     // Whether each color attachment has a corresponding resolve attachment.  Color resolve
     // attachments can be used to optimize resolve through glBlitFramebuffer() as well as support
     // GL_EXT_multisampled_render_to_texture and GL_EXT_multisampled_render_to_texture2.
-    //
-    // Note that depth/stencil resolve attachments require VK_KHR_depth_stencil_resolve which is
-    // currently not well supported, so ANGLE always takes a fallback path for them.  When a resolve
-    // path is implemented for depth/stencil attachments, another bit must be made free
-    // (mAttachmentFormats is one element too large, so there are 8 bits there to take).
     gl::DrawBufferMask mColorResolveAttachmentMask;
 
     // Whether each color attachment with a corresponding resolve attachment should be initialized
     // with said resolve attachment in an initial subpass.  This is an optimization to avoid
     // loadOp=LOAD on the implicit multisampled image used with multisampled-render-to-texture
     // render targets.  This operation is referred to as "unresolve".
+    //
+    // Unused when VK_EXT_multisampled_render_to_single_sampled is available.
     gl::DrawBufferMask mColorUnresolveAttachmentMask;
 
     // Color attachment formats are stored with their GL attachment indices.  The depth/stencil
@@ -289,10 +285,11 @@ class alignas(4) RenderPassDesc final
     static constexpr uint8_t kDepthStencilFormatStorageMask = 0x7;
 
     // Flags stored in the upper 5 bits of mAttachmentFormats.back().
-    static constexpr uint8_t kResolveDepthFlag     = 0x80;
-    static constexpr uint8_t kResolveStencilFlag   = 0x40;
-    static constexpr uint8_t kUnresolveDepthFlag   = 0x20;
-    static constexpr uint8_t kUnresolveStencilFlag = 0x10;
+    static constexpr uint8_t kIsRenderToTexture       = 0x80;
+    static constexpr uint8_t kResolveDepthStencilFlag = 0x40;
+    static constexpr uint8_t kUnresolveDepthFlag      = 0x20;
+    static constexpr uint8_t kUnresolveStencilFlag    = 0x10;
+    static constexpr uint8_t kSrgbWriteControlFlag    = 0x08;
 };
 
 bool operator==(const RenderPassDesc &lhs, const RenderPassDesc &rhs);
@@ -830,9 +827,8 @@ struct PackedPushConstantRange
 };
 
 template <typename T>
-using DescriptorSetLayoutArray = std::array<T, static_cast<size_t>(DescriptorSetIndex::EnumCount)>;
-using DescriptorSetLayoutPointerArray =
-    DescriptorSetLayoutArray<BindingPointer<DescriptorSetLayout>>;
+using DescriptorSetArray              = angle::PackedEnumMap<DescriptorSetIndex, T>;
+using DescriptorSetLayoutPointerArray = DescriptorSetArray<BindingPointer<DescriptorSetLayout>>;
 template <typename T>
 using PushConstantRangeArray = gl::ShaderMap<T>;
 
@@ -854,7 +850,7 @@ class PipelineLayoutDesc final
     const PushConstantRangeArray<PackedPushConstantRange> &getPushConstantRanges() const;
 
   private:
-    DescriptorSetLayoutArray<DescriptorSetLayoutDesc> mDescriptorSetLayouts;
+    DescriptorSetArray<DescriptorSetLayoutDesc> mDescriptorSetLayouts;
     PushConstantRangeArray<PackedPushConstantRange> mPushConstantRanges;
 
     // Verify the arrays are properly packed.
@@ -867,9 +863,8 @@ class PipelineLayoutDesc final
 };
 
 // Verify the structure is properly packed.
-static_assert(sizeof(PipelineLayoutDesc) ==
-                  (sizeof(DescriptorSetLayoutArray<DescriptorSetLayoutDesc>) +
-                   sizeof(gl::ShaderMap<PackedPushConstantRange>)),
+static_assert(sizeof(PipelineLayoutDesc) == (sizeof(DescriptorSetArray<DescriptorSetLayoutDesc>) +
+                                             sizeof(gl::ShaderMap<PackedPushConstantRange>)),
               "Unexpected Size");
 
 // Packed sampler description for the sampler cache.
@@ -1096,14 +1091,14 @@ class TextureDescriptorDesc
     ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
 };
 
-class UniformsAndXfbDesc
+class UniformsAndXfbDescriptorDesc
 {
   public:
-    UniformsAndXfbDesc();
-    ~UniformsAndXfbDesc();
+    UniformsAndXfbDescriptorDesc();
+    ~UniformsAndXfbDescriptorDesc();
 
-    UniformsAndXfbDesc(const UniformsAndXfbDesc &other);
-    UniformsAndXfbDesc &operator=(const UniformsAndXfbDesc &other);
+    UniformsAndXfbDescriptorDesc(const UniformsAndXfbDescriptorDesc &other);
+    UniformsAndXfbDescriptorDesc &operator=(const UniformsAndXfbDescriptorDesc &other);
 
     BufferSerial getDefaultUniformBufferSerial() const
     {
@@ -1123,7 +1118,7 @@ class UniformsAndXfbDesc
     size_t hash() const;
     void reset();
 
-    bool operator==(const UniformsAndXfbDesc &other) const;
+    bool operator==(const UniformsAndXfbDescriptorDesc &other) const;
 
   private:
     uint32_t mBufferCount;
@@ -1131,6 +1126,34 @@ class UniformsAndXfbDesc
     static constexpr size_t kDefaultUniformBufferIndex = 0;
     static constexpr size_t kMaxBufferCount = 1 + gl::IMPLEMENTATION_MAX_TRANSFORM_FEEDBACK_BUFFERS;
     std::array<BufferSerial, kMaxBufferCount> mBufferSerials;
+};
+
+class ShaderBuffersDescriptorDesc
+{
+  public:
+    ShaderBuffersDescriptorDesc();
+    ~ShaderBuffersDescriptorDesc();
+
+    ShaderBuffersDescriptorDesc(const ShaderBuffersDescriptorDesc &other);
+    ShaderBuffersDescriptorDesc &operator=(const ShaderBuffersDescriptorDesc &other);
+
+    size_t hash() const;
+    void reset();
+
+    bool operator==(const ShaderBuffersDescriptorDesc &other) const;
+
+    ANGLE_INLINE void appendBufferSerial(BufferSerial bufferSerial)
+    {
+        mPayload.push_back(bufferSerial.getValue());
+    }
+    ANGLE_INLINE void append32BitValue(uint32_t value) { mPayload.push_back(value); }
+
+    void append64BitValue(uint64_t value);
+
+  private:
+    // After a preliminary minimum size, use heap memory.
+    static constexpr size_t kFastBufferWordLimit = 32;
+    angle::FastVector<uint32_t, kFastBufferWordLimit> mPayload;
 };
 
 // In the FramebufferDesc object:
@@ -1163,6 +1186,10 @@ class FramebufferDesc
     void updateUnresolveMask(FramebufferNonResolveAttachmentMask unresolveMask);
     void updateDepthStencil(ImageOrBufferViewSubresourceSerial serial);
     void updateDepthStencilResolve(ImageOrBufferViewSubresourceSerial serial);
+    ANGLE_INLINE void setWriteControlMode(gl::SrgbWriteControlMode mode)
+    {
+        mSrgbWriteControlMode = static_cast<uint16_t>(mode);
+    }
     size_t hash() const;
 
     bool operator==(const FramebufferDesc &other) const;
@@ -1176,29 +1203,47 @@ class FramebufferDesc
     }
 
     FramebufferNonResolveAttachmentMask getUnresolveAttachmentMask() const;
+    ANGLE_INLINE gl::SrgbWriteControlMode getWriteControlMode() const
+    {
+        return (mSrgbWriteControlMode == 1) ? gl::SrgbWriteControlMode::Linear
+                                            : gl::SrgbWriteControlMode::Default;
+    }
 
     void updateLayerCount(uint32_t layerCount);
     uint32_t getLayerCount() const { return mLayerCount; }
     void updateFramebufferFetchMode(bool hasFramebufferFetch);
+
+    void updateRenderToTexture(bool isRenderToTexture);
 
   private:
     void reset();
     void update(uint32_t index, ImageOrBufferViewSubresourceSerial serial);
 
     // Note: this is an exclusive index. If there is one index it will be "1".
-    uint16_t mMaxIndex : 6;
+    // Maximum value is 18
+    uint16_t mMaxIndex : 5;
     uint16_t mHasFramebufferFetch : 1;
     static_assert(gl::IMPLEMENTATION_MAX_FRAMEBUFFER_LAYERS < (1 << 9) - 1,
                   "Not enough bits for mLayerCount");
+
     uint16_t mLayerCount : 9;
+
+    uint16_t mSrgbWriteControlMode : 1;
 
     // If the render pass contains an initial subpass to unresolve a number of attachments, the
     // subpass description is derived from the following mask, specifying which attachments need
     // to be unresolved.  Includes both color and depth/stencil attachments.
-    FramebufferNonResolveAttachmentMask mUnresolveAttachmentMask;
+    uint16_t mUnresolveAttachmentMask : kMaxFramebufferNonResolveAttachments;
+
+    // Whether this is a multisampled-render-to-single-sampled framebuffer.  Only used when using
+    // VK_EXT_multisampled_render_to_single_sampled.  Only one bit is used and the rest is padding.
+    uint16_t mIsRenderToTexture : 16 - kMaxFramebufferNonResolveAttachments;
 
     FramebufferAttachmentArray<ImageOrBufferViewSubresourceSerial> mSerials;
 };
+
+constexpr size_t kFramebufferDescSize = sizeof(FramebufferDesc);
+static_assert(kFramebufferDescSize == 148, "Size check failed");
 
 // Disable warnings about struct padding.
 ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
@@ -1291,9 +1336,15 @@ struct hash<rx::vk::TextureDescriptorDesc>
 };
 
 template <>
-struct hash<rx::vk::UniformsAndXfbDesc>
+struct hash<rx::vk::UniformsAndXfbDescriptorDesc>
 {
-    size_t operator()(const rx::vk::UniformsAndXfbDesc &key) const { return key.hash(); }
+    size_t operator()(const rx::vk::UniformsAndXfbDescriptorDesc &key) const { return key.hash(); }
+};
+
+template <>
+struct hash<rx::vk::ShaderBuffersDescriptorDesc>
+{
+    size_t operator()(const rx::vk::ShaderBuffersDescriptorDesc &key) const { return key.hash(); }
 };
 
 template <>
@@ -1331,10 +1382,11 @@ enum class VulkanCacheType
     PipelineLayout,
     Sampler,
     SamplerYcbcrConversion,
-    DescriptorSet,
     DescriptorSetLayout,
+    DriverUniformsDescriptors,
     TextureDescriptors,
-    UniformsAndXfbDescriptorSet,
+    UniformsAndXfbDescriptors,
+    ShaderBuffersDescriptors,
     Framebuffer,
     EnumCount
 };
@@ -1343,7 +1395,7 @@ enum class VulkanCacheType
 class CacheStats final : angle::NonCopyable
 {
   public:
-    CacheStats() : mHitCount(0), mMissCount(0) {}
+    CacheStats() { reset(); }
     ~CacheStats() {}
 
     ANGLE_INLINE void hit() { mHitCount++; }
@@ -1353,6 +1405,9 @@ class CacheStats final : angle::NonCopyable
         mHitCount += stats.mHitCount;
         mMissCount += stats.mMissCount;
     }
+
+    uint64_t getHitCount() const { return mHitCount; }
+    uint64_t getMissCount() const { return mMissCount; }
 
     ANGLE_INLINE double getHitRatio() const
     {
@@ -1366,9 +1421,33 @@ class CacheStats final : angle::NonCopyable
         }
     }
 
+    void reset()
+    {
+        mHitCount  = 0;
+        mMissCount = 0;
+    }
+
   private:
     uint64_t mHitCount;
     uint64_t mMissCount;
+};
+
+template <VulkanCacheType CacheType>
+class HasCacheStats : angle::NonCopyable
+{
+  public:
+    template <typename Accumulator>
+    void accumulateCacheStats(Accumulator *accum)
+    {
+        accum->accumulateCacheStats(CacheType, mCacheStats);
+        mCacheStats.reset();
+    }
+
+  protected:
+    HasCacheStats()          = default;
+    virtual ~HasCacheStats() = default;
+
+    CacheStats mCacheStats;
 };
 
 // TODO(jmadill): Add cache trimming/eviction.
@@ -1427,11 +1506,11 @@ class RenderPassCache final : angle::NonCopyable
 };
 
 // TODO(jmadill): Add cache trimming/eviction.
-class GraphicsPipelineCache final : angle::NonCopyable
+class GraphicsPipelineCache final : public HasCacheStats<VulkanCacheType::GraphicsPipeline>
 {
   public:
     GraphicsPipelineCache();
-    ~GraphicsPipelineCache();
+    ~GraphicsPipelineCache() override;
 
     void destroy(RendererVk *rendererVk);
     void release(ContextVk *context);
@@ -1488,7 +1567,6 @@ class GraphicsPipelineCache final : angle::NonCopyable
                                  vk::PipelineHelper **pipelineOut);
 
     std::unordered_map<vk::GraphicsPipelineDesc, vk::PipelineHelper> mPayload;
-    CacheStats mCacheStats;
 };
 
 class DescriptorSetLayoutCache final : angle::NonCopyable
@@ -1509,11 +1587,11 @@ class DescriptorSetLayoutCache final : angle::NonCopyable
     CacheStats mCacheStats;
 };
 
-class PipelineLayoutCache final : angle::NonCopyable
+class PipelineLayoutCache final : public HasCacheStats<VulkanCacheType::PipelineLayout>
 {
   public:
     PipelineLayoutCache();
-    ~PipelineLayoutCache();
+    ~PipelineLayoutCache() override;
 
     void destroy(RendererVk *rendererVk);
 
@@ -1524,14 +1602,13 @@ class PipelineLayoutCache final : angle::NonCopyable
 
   private:
     std::unordered_map<vk::PipelineLayoutDesc, vk::RefCountedPipelineLayout> mPayload;
-    CacheStats mCacheStats;
 };
 
-class SamplerCache final : angle::NonCopyable
+class SamplerCache final : public HasCacheStats<VulkanCacheType::Sampler>
 {
   public:
     SamplerCache();
-    ~SamplerCache();
+    ~SamplerCache() override;
 
     void destroy(RendererVk *rendererVk);
 
@@ -1541,15 +1618,15 @@ class SamplerCache final : angle::NonCopyable
 
   private:
     std::unordered_map<vk::SamplerDesc, vk::RefCountedSampler> mPayload;
-    CacheStats mCacheStats;
 };
 
 // YuvConversion Cache
-class SamplerYcbcrConversionCache final : angle::NonCopyable
+class SamplerYcbcrConversionCache final
+    : public HasCacheStats<VulkanCacheType::SamplerYcbcrConversion>
 {
   public:
     SamplerYcbcrConversionCache();
-    ~SamplerYcbcrConversionCache();
+    ~SamplerYcbcrConversionCache() override;
 
     void destroy(RendererVk *rendererVk);
 
@@ -1562,15 +1639,15 @@ class SamplerYcbcrConversionCache final : angle::NonCopyable
 
   private:
     std::unordered_map<uint64_t, vk::RefCountedSamplerYcbcrConversion> mPayload;
-    CacheStats mCacheStats;
 };
 
 // DescriptorSet Cache
-class DriverUniformsDescriptorSetCache final : angle::NonCopyable
+class DriverUniformsDescriptorSetCache final
+    : public HasCacheStats<VulkanCacheType::DriverUniformsDescriptors>
 {
   public:
     DriverUniformsDescriptorSetCache() = default;
-    ~DriverUniformsDescriptorSetCache() { ASSERT(mPayload.empty()); }
+    ~DriverUniformsDescriptorSetCache() override { ASSERT(mPayload.empty()); }
 
     void destroy(RendererVk *rendererVk);
 
@@ -1594,40 +1671,38 @@ class DriverUniformsDescriptorSetCache final : angle::NonCopyable
 
   private:
     angle::FastIntegerMap<VkDescriptorSet> mPayload;
-    CacheStats mCacheStats;
 };
 
 // Templated Descriptors Cache
-template <typename key, VulkanCacheType cacheType>
-class DescriptorSetCache final : angle::NonCopyable
+template <typename Key, VulkanCacheType CacheType>
+class DescriptorSetCache final : public HasCacheStats<CacheType>
 {
   public:
     DescriptorSetCache() = default;
-    ~DescriptorSetCache() { ASSERT(mPayload.empty()); }
+    ~DescriptorSetCache() override { ASSERT(mPayload.empty()); }
 
     void destroy(RendererVk *rendererVk);
 
-    ANGLE_INLINE bool get(const key &desc, VkDescriptorSet *descriptorSet)
+    ANGLE_INLINE bool get(const Key &desc, VkDescriptorSet *descriptorSet)
     {
         auto iter = mPayload.find(desc);
         if (iter != mPayload.end())
         {
             *descriptorSet = iter->second;
-            mCacheStats.hit();
+            this->mCacheStats.hit();
             return true;
         }
-        mCacheStats.miss();
+        this->mCacheStats.miss();
         return false;
     }
 
-    ANGLE_INLINE void insert(const key &desc, VkDescriptorSet descriptorSet)
+    ANGLE_INLINE void insert(const Key &desc, VkDescriptorSet descriptorSet)
     {
         mPayload.emplace(desc, descriptorSet);
     }
 
   private:
-    angle::HashMap<key, VkDescriptorSet> mPayload;
-    CacheStats mCacheStats;
+    angle::HashMap<Key, VkDescriptorSet> mPayload;
 };
 
 // Only 1 driver uniform binding is used.

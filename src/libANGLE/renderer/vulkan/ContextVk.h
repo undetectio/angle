@@ -37,6 +37,22 @@ class ShareGroupVk;
 static constexpr uint32_t kMaxGpuEventNameLen = 32;
 using EventName                               = std::array<char, kMaxGpuEventNameLen>;
 
+enum class PipelineType
+{
+    Graphics = 0,
+    Compute  = 1,
+
+    InvalidEnum = 2,
+    EnumCount   = 2,
+};
+
+using ContextVkDescriptorSetList = angle::PackedEnumMap<PipelineType, uint32_t>;
+
+struct ContextVkPerfCounters
+{
+    ContextVkDescriptorSetList descriptorSetsAllocated;
+};
+
 class ContextVk : public ContextImpl, public vk::Context, public MultisampleTextureInitializer
 {
   public:
@@ -319,7 +335,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     void invalidateDefaultAttribute(size_t attribIndex);
     void invalidateDefaultAttributes(const gl::AttributesMask &dirtyMask);
-    void onFramebufferChange(FramebufferVk *framebufferVk);
+    angle::Result onFramebufferChange(FramebufferVk *framebufferVk);
     void onDrawFramebufferRenderPassDescChange(FramebufferVk *framebufferVk,
                                                bool *renderPassDescChangedOut);
     void onHostVisibleBufferWrite() { mIsAnyHostVisibleBufferWritten = true; }
@@ -424,12 +440,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     vk::DescriptorSetLayoutDesc getDriverUniformsDescriptorSetDesc(
         VkShaderStageFlags shaderStages) const;
 
-    // We use textureSerial to optimize texture binding updates. Each permutation of a
-    // {VkImage/VkSampler} generates a unique serial. These object ids are combined to form a unique
-    // signature for each descriptor set. This allows us to keep a cache of descriptor sets and
-    // avoid calling vkAllocateDesctiporSets each texture update.
-    const vk::TextureDescriptorDesc &getActiveTexturesDesc() const { return mActiveTexturesDesc; }
-
     void updateScissor(const gl::State &glState);
 
     bool emulateSeamfulCubeMapSampling() const { return mEmulateSeamfulCubeMapSampling; }
@@ -462,6 +472,14 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                         imageLayout, vk::AliasingMode::Allowed, image);
     }
 
+    void onColorDraw(vk::ImageHelper *image,
+                     vk::ImageHelper *resolveImage,
+                     vk::PackedAttachmentIndex packedAttachmentIndex)
+    {
+        ASSERT(mRenderPassCommands->started());
+        mRenderPassCommands->colorImagesDraw(&mResourceUseList, image, resolveImage,
+                                             packedAttachmentIndex);
+    }
     void onDepthStencilDraw(gl::LevelIndex level,
                             uint32_t layerStart,
                             uint32_t layerCount,
@@ -473,11 +491,11 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                                     layerCount, image, resolveImage);
     }
 
-    void onImageHelperRelease(const vk::ImageHelper *image)
+    void finalizeImageLayout(const vk::ImageHelper *image)
     {
         if (mRenderPassCommands->started())
         {
-            mRenderPassCommands->onImageHelperRelease(this, image);
+            mRenderPassCommands->finalizeImageLayout(this, image);
         }
     }
 
@@ -494,6 +512,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
                                      const gl::Rectangle &renderArea,
                                      const vk::RenderPassDesc &renderPassDesc,
                                      const vk::AttachmentOpsArray &renderPassAttachmentOps,
+                                     const vk::PackedAttachmentCount colorAttachmentCount,
                                      const vk::PackedAttachmentIndex depthStencilAttachmentIndex,
                                      const vk::PackedClearValuesArray &clearValues,
                                      vk::CommandBuffer **commandBufferOut);
@@ -561,6 +580,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // Used by QueryVk to share query helpers between transform feedback queries.
     QueryVk *getActiveRenderPassQuery(gl::QueryType queryType) const;
 
+    void syncObjectPerfCounters();
     void updateOverlayOnPresent();
     void addOverlayUsedBuffersCount(vk::CommandBufferHelper *commandBuffer);
 
@@ -589,6 +609,12 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // Implementation of MultisampleTextureInitializer
     angle::Result initializeMultisampleTextureToBlack(const gl::Context *context,
                                                       gl::Texture *glTexture) override;
+
+    // TODO(http://anglebug.com/5624): rework updateActiveTextures(), createPipelineLayout(),
+    // handleDirtyGraphicsPipeline(), and ProgramPipelineVk::link().
+    void resetCurrentGraphicsPipeline() { mCurrentGraphicsPipeline = nullptr; }
+
+    void onProgramExecutableReset(ProgramExecutableVk *executableVk);
 
   private:
     // Dirty bits.
@@ -648,15 +674,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
         void destroy(RendererVk *rendererVk);
     };
 
-    enum class PipelineType
-    {
-        Graphics = 0,
-        Compute  = 1,
-
-        InvalidEnum = 2,
-        EnumCount   = 2,
-    };
-
     // The GpuEventQuery struct holds together a timestamp query and enough data to create a
     // trace event based on that. Use traceGpuEvent to insert such queries.  They will be readback
     // when the results are available, without inserting a GPU bubble.
@@ -688,14 +705,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     {
         double gpuTimestampS;
         double cpuTimestampS;
-    };
-
-    // Performance Counters specific to this object type
-    using DescriptorSetList =
-        std::array<uint32_t, ToUnderlying(ContextVk::PipelineType::EnumCount)>;
-    struct PerfCounters
-    {
-        DescriptorSetList descriptorSetsAllocated;
     };
 
     class ScopedDescriptorSetUpdates;
@@ -778,12 +787,12 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     void invalidateCurrentDefaultUniforms();
     angle::Result invalidateCurrentTextures(const gl::Context *context);
-    void invalidateCurrentShaderResources();
+    angle::Result invalidateCurrentShaderResources();
     void invalidateGraphicsDriverUniforms();
     void invalidateDriverUniforms();
 
     // Handlers for graphics pipeline dirty bits.
-    angle::Result handleDirtyGraphicsMemorybarrier(DirtyBits::Iterator *dirtyBitsIterator,
+    angle::Result handleDirtyGraphicsMemoryBarrier(DirtyBits::Iterator *dirtyBitsIterator,
                                                    DirtyBits dirtyBitMask);
     angle::Result handleDirtyGraphicsEventLog(DirtyBits::Iterator *dirtyBitsIterator,
                                               DirtyBits dirtyBitMask);
@@ -832,7 +841,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     angle::Result handleDirtyComputeDescriptorSets();
 
     // Common parts of the common dirty bit handlers.
-    angle::Result handleDirtyMemorybarrierImpl(DirtyBits::Iterator *dirtyBitsIterator,
+    angle::Result handleDirtyMemoryBarrierImpl(DirtyBits::Iterator *dirtyBitsIterator,
                                                DirtyBits dirtyBitMask);
     angle::Result handleDirtyEventLogImpl(vk::CommandBuffer *commandBuffer);
     angle::Result handleDirtyTexturesImpl(vk::CommandBufferHelper *commandBufferHelper);
@@ -852,7 +861,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     void writeAtomicCounterBufferDriverUniformOffsets(uint32_t *offsetsOut, size_t offsetsSize);
 
     angle::Result submitFrame(const vk::Semaphore *signalSemaphore);
-    angle::Result memoryBarrierImpl(GLbitfield barriers, VkPipelineStageFlags stageMask);
 
     angle::Result synchronizeCpuGpuTime();
     angle::Result traceGpuEventImpl(vk::CommandBuffer *commandBuffer,
@@ -879,7 +887,22 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     void initIndexTypeMap();
 
+    // Read-after-write hazards are generally handled with |glMemoryBarrier| when the source of
+    // write is storage output.  When the write is outside render pass, the natural placement of the
+    // render pass after the current outside render pass commands ensures that the memory barriers
+    // and image layout transitions automatically take care of such synchronizations.
+    //
+    // There are a number of read-after-write cases that require breaking the render pass however to
+    // preserve the order of operations:
+    //
+    // - Transform feedback write (in render pass), then vertex/index read (in render pass)
+    // - Transform feedback write (in render pass), then ubo read (outside render pass)
+    // - Framebuffer attachment write (in render pass), then texture sample (outside render pass)
+    //   * Note that texture sampling inside render pass would cause a feedback loop
+    //
     angle::Result endRenderPassIfTransformFeedbackBuffer(const vk::BufferHelper *buffer);
+    angle::Result endRenderPassIfComputeReadAfterTransformFeedbackWrite();
+    angle::Result endRenderPassIfComputeReadAfterAttachmentWrite();
 
     void populateTransformFeedbackBufferSet(
         size_t bufferCount,
@@ -906,6 +929,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     SpecConstUsageBits getCurrentProgramSpecConstUsageBits() const;
     void updateGraphicsPipelineDescWithSpecConstUsageBits(SpecConstUsageBits usageBits);
+
+    ContextVkPerfCounters getAndResetObjectPerfCounters();
 
     std::array<GraphicsDirtyBitHandler, DIRTY_BIT_MAX> mGraphicsDirtyBitHandlers;
     std::array<ComputeDirtyBitHandler, DIRTY_BIT_MAX> mComputeDirtyBitHandlers;
@@ -1005,7 +1030,14 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // This cache should also probably include the texture index (shader location) and array
     // index (also in the shader). This info is used in the descriptor update step.
     gl::ActiveTextureArray<vk::TextureUnit> mActiveTextures;
+
+    // We use textureSerial to optimize texture binding updates. Each permutation of a
+    // {VkImage/VkSampler} generates a unique serial. These object ids are combined to form a unique
+    // signature for each descriptor set. This allows us to keep a cache of descriptor sets and
+    // avoid calling vkAllocateDesctiporSets each texture update.
     vk::TextureDescriptorDesc mActiveTexturesDesc;
+
+    vk::ShaderBuffersDescriptorDesc mShaderBuffersDescriptorDesc;
 
     gl::ActiveTextureArray<TextureVk *> mActiveImages;
 
@@ -1062,7 +1094,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     // A mix of per-frame and per-run counters.
     vk::PerfCounters mPerfCounters;
-    PerfCounters mObjectPerfCounters;
+    ContextVkPerfCounters mContextPerfCounters;
+    ContextVkPerfCounters mCumulativeContextPerfCounters;
 
     gl::State::DirtyBits mPipelineDirtyBitsMask;
 

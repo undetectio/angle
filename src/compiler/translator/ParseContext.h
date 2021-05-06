@@ -64,7 +64,7 @@ class TParseContext : angle::NonCopyable
                          const char *token);
 
     TIntermBlock *getTreeRoot() const { return mTreeRoot; }
-    void setTreeRoot(TIntermBlock *treeRoot) { mTreeRoot = treeRoot; }
+    void setTreeRoot(TIntermBlock *treeRoot);
 
     bool getFragmentPrecisionHigh() const
     {
@@ -177,6 +177,7 @@ class TParseContext : angle::NonCopyable
     // Done only for empty declarations.
     void emptyDeclarationErrorCheck(const TType &type, const TSourceLoc &location);
 
+    void checkCanUseLayoutQualifier(const TSourceLoc &location);
     bool checkLayoutQualifierSupported(const TSourceLoc &location,
                                        const ImmutableString &layoutQualifierName,
                                        int versionRequired);
@@ -190,6 +191,7 @@ class TParseContext : angle::NonCopyable
                                         const TPublicType &type,
                                         const TSourceLoc &qualifierLocation);
     void checkLocalVariableConstStorageQualifier(const TQualifierWrapperBase &qualifier);
+    void checkTCSOutVarIndexIsValid(TIntermBinary *binaryExpression, const TSourceLoc &location);
     const TPragma &pragma() const { return mDirectiveHandler.pragma(); }
     const TExtensionBehavior &extensionBehavior() const
     {
@@ -574,6 +576,10 @@ class TParseContext : angle::NonCopyable
     void checkYuvIsNotSpecified(const TSourceLoc &location, bool yuv);
 
     void checkEarlyFragmentTestsIsNotSpecified(const TSourceLoc &location, bool earlyFragmentTests);
+
+    void checkNoncoherentIsSpecified(const TSourceLoc &location, bool noncoherent);
+
+    void checkNoncoherentIsNotSpecified(const TSourceLoc &location, bool noncoherent);
 
     bool checkUnsizedArrayConstructorArgumentDimensionality(const TIntermSequence &arguments,
                                                             TType type,

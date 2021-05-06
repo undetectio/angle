@@ -19,6 +19,7 @@
 #include "common/angle_version.h"
 #include "common/matrix_utils.h"
 #include "common/platform.h"
+#include "common/system_utils.h"
 #include "common/utilities.h"
 #include "common/system_utils.h"
 #include "libANGLE/Buffer.h"
@@ -40,6 +41,7 @@
 #include "libANGLE/TransformFeedback.h"
 #include "libANGLE/VertexArray.h"
 #include "libANGLE/capture/FrameCapture.h"
+#include "libANGLE/capture/frame_capture_utils.h"
 #include "libANGLE/formatutils.h"
 #include "libANGLE/queryconversions.h"
 #include "libANGLE/queryutils.h"
@@ -51,6 +53,7 @@ namespace gl
 {
 namespace
 {
+
 egl::ShareGroup *AllocateOrGetShareGroup(egl::Display *display, const gl::Context *shareContext)
 {
     if (shareContext)
@@ -68,7 +71,25 @@ egl::ShareGroup *AllocateOrGetShareGroup(egl::Display *display, const gl::Contex
 template <typename T>
 angle::Result GetQueryObjectParameter(const Context *context, Query *query, GLenum pname, T *params)
 {
-    ASSERT(query != nullptr || pname == GL_QUERY_RESULT_AVAILABLE_EXT);
+    if (!query)
+    {
+        // Some applications call into glGetQueryObjectuiv(...) prior to calling glBeginQuery(...)
+        // This wouldn't be an issue since the validation layer will handle such a usecases but when
+        // the app enables EGL_KHR_create_context_no_error extension, we skip the validation layer.
+        switch (pname)
+        {
+            case GL_QUERY_RESULT_EXT:
+                *params = 0;
+                break;
+            case GL_QUERY_RESULT_AVAILABLE_EXT:
+                *params = GL_FALSE;
+                break;
+            default:
+                UNREACHABLE();
+                return angle::Result::Stop;
+        }
+        return angle::Result::Continue;
+    }
 
     switch (pname)
     {
@@ -231,18 +252,6 @@ void GetObjectLabelBase(const std::string &objectLabel,
         *length = static_cast<GLsizei>(writeLength);
     }
 }
-
-// The rest default to false.
-constexpr angle::PackedEnumMap<PrimitiveMode, bool, angle::EnumSize<PrimitiveMode>() + 1>
-    kValidBasicDrawModes = {{
-        {PrimitiveMode::Points, true},
-        {PrimitiveMode::Lines, true},
-        {PrimitiveMode::LineLoop, true},
-        {PrimitiveMode::LineStrip, true},
-        {PrimitiveMode::Triangles, true},
-        {PrimitiveMode::TriangleStrip, true},
-        {PrimitiveMode::TriangleFan, true},
-    }};
 
 enum SubjectIndexes : angle::SubjectIndex
 {
@@ -559,7 +568,7 @@ void Context::initializeDefaultResources()
 
     mBlitDirtyBits.set(State::DIRTY_BIT_SCISSOR_TEST_ENABLED);
     mBlitDirtyBits.set(State::DIRTY_BIT_SCISSOR);
-    mBlitDirtyBits.set(State::DIRTY_BIT_FRAMEBUFFER_SRGB);
+    mBlitDirtyBits.set(State::DIRTY_BIT_FRAMEBUFFER_SRGB_WRITE_CONTROL_MODE);
     mBlitDirtyBits.set(State::DIRTY_BIT_READ_FRAMEBUFFER_BINDING);
     mBlitDirtyBits.set(State::DIRTY_BIT_DRAW_FRAMEBUFFER_BINDING);
     mBlitDirtyObjects.set(State::DIRTY_OBJECT_READ_FRAMEBUFFER);
@@ -840,7 +849,7 @@ GLuint Context::createShaderProgramv(ShaderType type, GLsizei count, const GLcha
                 // We must wait to mark the program separable until it's successfully compiled.
                 programObject->setSeparable(true);
 
-                programObject->attachShader(this, shaderObject);
+                programObject->attachShader(shaderObject);
 
                 if (programObject->link(this) != angle::Result::Continue)
                 {
@@ -855,11 +864,14 @@ GLuint Context::createShaderProgramv(ShaderType type, GLsizei count, const GLcha
                     return 0u;
                 }
 
-                // Need to manually resolveLink(), since onProgramLink() doesn't think the program
-                // is in use.   For the normal glDetachShader() API call path, this is done during
-                // ValidateDetachShader() via gl::GetValidProgram().
-                programObject->resolveLink(this);
-                programObject->detachShader(this, shaderObject);
+                // If frame capture is enabled, don't detach the shader since we need the following
+                // to recreate the Shader and Program during MEC setup:
+                // 1.) Shader ID
+                // 2.) Shader source
+                if (!getFrameCapture()->enabled())
+                {
+                    programObject->detachShader(this, shaderObject);
+                }
             }
 
             InfoLog &programInfoLog = programObject->getExecutable().getInfoLog();
@@ -3212,6 +3224,17 @@ const GLubyte *Context::getString(GLenum name) const
         case GL_REQUESTABLE_EXTENSIONS_ANGLE:
             return reinterpret_cast<const GLubyte *>(mRequestableExtensionString);
 
+        case GL_SERIALIZED_CONTEXT_STRING_ANGLE:
+            if (angle::SerializeContextToString(this, &mCachedSerializedStateString) ==
+                angle::Result::Continue)
+            {
+                return reinterpret_cast<const GLubyte *>(mCachedSerializedStateString.c_str());
+            }
+            else
+            {
+                return nullptr;
+            }
+
         default:
             UNREACHABLE();
             return nullptr;
@@ -3532,6 +3555,9 @@ Extensions Context::generateSupportedExtensions() const
     // GL_ANGLE_get_tex_level_parameter is implemented in the frontend
     supportedExtensions.getTexLevelParameterANGLE = true;
 
+    // Always enabled. Will return a default string if capture is not enabled.
+    supportedExtensions.getSerializedContextStringANGLE = true;
+
     return supportedExtensions;
 }
 
@@ -3688,10 +3714,12 @@ void Context::initCaps()
     for (ShaderType shaderType : AllShaderTypes())
     {
         ANGLE_LIMIT_CAP(mState.mCaps.maxShaderAtomicCounterBuffers[shaderType],
-                        IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS);
+                        IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS);
     }
+    ANGLE_LIMIT_CAP(mState.mCaps.maxAtomicCounterBufferBindings,
+                    IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS);
     ANGLE_LIMIT_CAP(mState.mCaps.maxCombinedAtomicCounterBuffers,
-                    IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS);
+                    IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS);
 
     for (ShaderType shaderType : AllShaderTypes())
     {
@@ -3721,18 +3749,27 @@ void Context::initCaps()
         }
     }
 
+    // Hide emulated ETC1 extension from WebGL contexts.
+    if (mWebGLContext && getLimitations().emulatedEtc1)
+    {
+        mSupportedExtensions.compressedETC1RGB8TextureOES = false;
+    }
+
     // If we're capturing application calls for replay, don't expose any binary formats to prevent
     // traces from trying to use cached results
-    if (getFrameCapture()->enabled())
+    if (getFrameCapture()->enabled() || getFrontendFeatures().captureLimits.enabled)
     {
-        INFO() << "Limiting binary format support count to zero while FrameCapture enabled"
+        INFO() << "Limit some features because "
+               << (getFrameCapture()->enabled() ? "FrameCapture is enabled"
+                                                : "FrameCapture limits were forced")
                << std::endl;
+
+        INFO() << "Limiting binary format support count to zero";
         mDisplay->overrideFrontendFeatures({"disable_program_binary"}, true);
 
         // Set to the most common limit per gpuinfo.org. Required for several platforms we test.
         constexpr GLint maxImageUnits = 8;
-        INFO() << "Limiting image unit count to " << maxImageUnits << " while FrameCapture enabled"
-               << std::endl;
+        INFO() << "Limiting image unit count to " << maxImageUnits;
         ANGLE_LIMIT_CAP(mState.mCaps.maxImageUnits, maxImageUnits);
 
         // Set a large uniform buffer offset alignment that works on multiple platforms.
@@ -3740,30 +3777,25 @@ void Context::initCaps()
         // Values seen during development: ARM (16), Intel (32), Qualcomm (128), Nvidia (256)
         constexpr GLint uniformBufferOffsetAlignment = 256;
         ASSERT(uniformBufferOffsetAlignment % mState.mCaps.uniformBufferOffsetAlignment == 0);
-        INFO() << "Setting uniform buffer offset alignment to " << uniformBufferOffsetAlignment
-               << " while FrameCapture enabled" << std::endl;
+        INFO() << "Setting uniform buffer offset alignment to " << uniformBufferOffsetAlignment;
         mState.mCaps.uniformBufferOffsetAlignment = uniformBufferOffsetAlignment;
 
         INFO() << "Disabling GL_EXT_map_buffer_range and GL_OES_mapbuffer during capture, which "
-                  "are not supported on some native drivers"
-               << std::endl;
+                  "are not supported on some native drivers";
         mState.mExtensions.mapBufferRange = false;
         mState.mExtensions.mapBufferOES   = false;
 
         INFO() << "Disabling GL_CHROMIUM_bind_uniform_location during capture, which is not "
-                  "supported on native drivers"
-               << std::endl;
+                  "supported on native drivers";
         mState.mExtensions.bindUniformLocation = false;
 
         INFO() << "Disabling GL_NV_shader_noperspective_interpolation during capture, which is not "
-                  "supported on some native drivers"
-               << std::endl;
+                  "supported on some native drivers";
         mState.mExtensions.noperspectiveInterpolationNV = false;
 
         // Nvidia's Vulkan driver only supports 4 draw buffers
         constexpr GLint maxDrawBuffers = 4;
-        INFO() << "Limiting draw buffer count to " << maxDrawBuffers
-               << " while FrameCapture enabled" << std::endl;
+        INFO() << "Limiting draw buffer count to " << maxDrawBuffers;
         ANGLE_LIMIT_CAP(mState.mCaps.maxDrawBuffers, maxDrawBuffers);
     }
 
@@ -3911,7 +3943,9 @@ void Context::updateCaps()
         mValidBufferBindings.set(BufferBinding::Texture);
     }
 
-    mThreadPool = angle::WorkerThreadPool::Create(mState.mExtensions.parallelShaderCompile);
+    mThreadPool = angle::WorkerThreadPool::Create(
+        mState.mExtensions.parallelShaderCompile ||
+        getFrontendFeatures().enableCompressingPipelineCacheInThreadPool.enabled);
 
     // Reinitialize some dirty bits that depend on extensions.
     if (mState.isRobustResourceInitEnabled())
@@ -5906,7 +5940,7 @@ void Context::attachShader(ShaderProgramID program, ShaderProgramID shader)
     Program *programObject = mState.mShaderProgramManager->getProgram(program);
     Shader *shaderObject   = mState.mShaderProgramManager->getShader(shader);
     ASSERT(programObject && shaderObject);
-    programObject->attachShader(this, shaderObject);
+    programObject->attachShader(shaderObject);
 }
 
 void Context::copyBufferSubData(BufferBinding readTarget,
@@ -6607,7 +6641,7 @@ void Context::getFloatvRobust(GLenum pname, GLsizei bufSize, GLsizei *length, GL
 
 void Context::getIntegerv(GLenum pname, GLint *params)
 {
-    GLenum nativeType;
+    GLenum nativeType      = GL_NONE;
     unsigned int numParams = 0;
     getQueryParameterInfo(pname, &nativeType, &numParams);
 
@@ -8806,6 +8840,7 @@ angle::Result Context::onProgramLink(Program *programObject)
         if (programObject->isLinked())
         {
             ANGLE_TRY(mState.onProgramExecutableChange(this, programObject));
+            programObject->onStateChange(angle::SubjectMessage::ProgramRelinked);
         }
         mStateCache.onProgramExecutableChange(this);
     }
@@ -9022,7 +9057,9 @@ StateCache::StateCache()
       mCachedBasicDrawElementsError(kInvalidPointer),
       mCachedTransformFeedbackActiveUnpaused(false),
       mCachedCanDraw(false)
-{}
+{
+    mCachedValidDrawModes.fill(false);
+}
 
 StateCache::~StateCache() = default;
 
@@ -9251,11 +9288,11 @@ void StateCache::setValidDrawModes(bool pointsOK,
 {
     mCachedValidDrawModes[PrimitiveMode::Points]                 = pointsOK;
     mCachedValidDrawModes[PrimitiveMode::Lines]                  = linesOK;
-    mCachedValidDrawModes[PrimitiveMode::LineStrip]              = linesOK;
     mCachedValidDrawModes[PrimitiveMode::LineLoop]               = linesOK;
+    mCachedValidDrawModes[PrimitiveMode::LineStrip]              = linesOK;
     mCachedValidDrawModes[PrimitiveMode::Triangles]              = trisOK;
-    mCachedValidDrawModes[PrimitiveMode::TriangleFan]            = trisOK;
     mCachedValidDrawModes[PrimitiveMode::TriangleStrip]          = trisOK;
+    mCachedValidDrawModes[PrimitiveMode::TriangleFan]            = trisOK;
     mCachedValidDrawModes[PrimitiveMode::LinesAdjacency]         = lineAdjOK;
     mCachedValidDrawModes[PrimitiveMode::LineStripAdjacency]     = lineAdjOK;
     mCachedValidDrawModes[PrimitiveMode::TrianglesAdjacency]     = triAdjOK;
@@ -9299,18 +9336,19 @@ void StateCache::updateValidDrawModes(Context *context)
 
     if (!programExecutable || !programExecutable->hasLinkedShaderStage(ShaderType::Geometry))
     {
-        mCachedValidDrawModes = kValidBasicDrawModes;
+        // All draw modes are valid, since drawing without a program does not generate an error and
+        // and operations requiring a GS will trigger other validation errors.
+        // `patchOK = false` due to checking above already enabling it if a TS is present.
+        setValidDrawModes(true, true, true, true, true, false);
         return;
     }
 
-    ASSERT(programExecutable->hasLinkedShaderStage(ShaderType::Geometry));
     PrimitiveMode gsMode = programExecutable->getGeometryShaderInputPrimitiveType();
-
-    bool pointsOK  = gsMode == PrimitiveMode::Points;
-    bool linesOK   = gsMode == PrimitiveMode::Lines;
-    bool trisOK    = gsMode == PrimitiveMode::Triangles;
-    bool lineAdjOK = gsMode == PrimitiveMode::LinesAdjacency;
-    bool triAdjOK  = gsMode == PrimitiveMode::TrianglesAdjacency;
+    bool pointsOK        = gsMode == PrimitiveMode::Points;
+    bool linesOK         = gsMode == PrimitiveMode::Lines;
+    bool trisOK          = gsMode == PrimitiveMode::Triangles;
+    bool lineAdjOK       = gsMode == PrimitiveMode::LinesAdjacency;
+    bool triAdjOK        = gsMode == PrimitiveMode::TrianglesAdjacency;
 
     setValidDrawModes(pointsOK, linesOK, trisOK, lineAdjOK, triAdjOK, false);
 }

@@ -295,15 +295,17 @@ void RendererVk::ensureCapsInitialized() const
     // Enable GL_EXT_buffer_storage
     mNativeExtensions.bufferStorageEXT = true;
 
-    // Enable GL_EXT_shader_framebuffer_fetch_non_coherent
-    mNativeExtensions.shaderFramebufferFetchNonCoherentEXT = false;
-
-    // To ensure that ETC2/EAC formats are enabled only on hardware that supports them natively,
-    // this flag is not set by the function above and must be set explicitly. It exposes
-    // ANGLE_compressed_texture_etc extension string.
-    mNativeExtensions.compressedTextureETC =
-        (mPhysicalDeviceFeatures.textureCompressionETC2 == VK_TRUE) &&
-        gl::DetermineCompressedTextureETCSupport(mNativeTextureCaps);
+    // When ETC2/EAC formats are natively supported, enable ANGLE-specific extension string to
+    // expose them to WebGL. In other case, mark potentially-available ETC1 extension as emulated.
+    if ((mPhysicalDeviceFeatures.textureCompressionETC2 == VK_TRUE) &&
+        gl::DetermineCompressedTextureETCSupport(mNativeTextureCaps))
+    {
+        mNativeExtensions.compressedTextureETC = true;
+    }
+    else
+    {
+        mNativeLimitations.emulatedEtc1 = true;
+    }
 
     // Vulkan doesn't support ASTC 3D block textures, which are required by
     // GL_OES_texture_compression_astc.
@@ -341,9 +343,8 @@ void RendererVk::ensureCapsInitialized() const
     mNativeExtensions.robustness =
         !IsSwiftshader(mPhysicalDeviceProperties.vendorID, mPhysicalDeviceProperties.deviceID) &&
         !IsARM(mPhysicalDeviceProperties.vendorID);
-    mNativeExtensions.textureBorderClampOES  = false;  // not implemented yet
-    mNativeExtensions.translatedShaderSource = true;
-    mNativeExtensions.discardFramebuffer     = true;
+    mNativeExtensions.textureBorderClampOES = false;  // not implemented yet
+    mNativeExtensions.discardFramebuffer    = true;
 
     // Enable EXT_texture_type_2_10_10_10_REV
     mNativeExtensions.textureFormat2101010REV = true;
@@ -450,6 +451,9 @@ void RendererVk::ensureCapsInitialized() const
     mNativeExtensions.textureSRGBOverride =
         vk::GetTextureSRGBOverrideSupport(this, mNativeExtensions);
     mNativeExtensions.textureSRGBDecode = vk::GetTextureSRGBDecodeSupport(this);
+
+    // EXT_srgb_write_control requires image_format_list
+    mNativeExtensions.sRGBWriteControl = getFeatures().supportsImageFormatList.enabled;
 
     // Vulkan natively supports io interface block.
     mNativeExtensions.shaderIoBlocksOES = true;
@@ -686,20 +690,21 @@ void RendererVk::ensureCapsInitialized() const
     // likely not very useful, so we use the same limit (4 + MAX_ATOMIC_COUNTER_BUFFERS) for the
     // vertex stage to determine if we would want to add support for atomic counter buffers.
     constexpr uint32_t kMinimumStorageBuffersForAtomicCounterBufferSupport =
-        gl::limits::kMinimumComputeStorageBuffers + gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS;
+        gl::limits::kMinimumComputeStorageBuffers +
+        gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS;
     uint32_t maxVertexStageAtomicCounterBuffers = 0;
     uint32_t maxPerStageAtomicCounterBuffers    = 0;
     uint32_t maxCombinedAtomicCounterBuffers    = 0;
 
     if (maxPerStageStorageBuffers >= kMinimumStorageBuffersForAtomicCounterBufferSupport)
     {
-        maxPerStageAtomicCounterBuffers = gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS;
-        maxCombinedAtomicCounterBuffers = gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS;
+        maxPerStageAtomicCounterBuffers = gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS;
+        maxCombinedAtomicCounterBuffers = gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS;
     }
 
     if (maxVertexStageStorageBuffers >= kMinimumStorageBuffersForAtomicCounterBufferSupport)
     {
-        maxVertexStageAtomicCounterBuffers = gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFERS;
+        maxVertexStageAtomicCounterBuffers = gl::IMPLEMENTATION_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS;
     }
 
     maxVertexStageStorageBuffers -= maxVertexStageAtomicCounterBuffers;
@@ -816,34 +821,39 @@ void RendererVk::ensureCapsInitialized() const
     mNativeCaps.maxCombinedShaderOutputResources =
         LimitToInt(maxPerStageResources - kReservedPerStageBindingCount);
 
-    // The max vertex output components should not include gl_Position.
-    // The gles2.0 section 2.10 states that "gl_Position is not a varying variable and does
-    // not count against this limit.", but the Vulkan spec has no such mention in its Built-in
-    // vars section. It is implicit that we need to actually reserve it for Vulkan in that case.
-    GLint reservedVaryingVectorCount = 1;
+    // Reserve 1 extra varying for ANGLEPosition when GLLineRasterization is enabled
+    constexpr GLint kReservedVaryingComponentsForGLLineRasterization = 4;
+    // Reserve 1 extra varying for transform feedback capture of gl_Position.
+    constexpr GLint kReservedVaryingComponentsForTransformFeedbackExtension = 4;
 
-    // Reserve 1 extra for ANGLEPosition when GLLineRasterization is enabled
-    constexpr GLint kReservedVaryingForGLLineRasterization = 1;
-    // Reserve 1 extra for transform feedback capture of gl_Position.
-    constexpr GLint kReservedVaryingForTransformFeedbackExtension = 1;
+    GLint reservedVaryingComponentCount = 0;
 
     if (getFeatures().basicGLLineRasterization.enabled)
     {
-        reservedVaryingVectorCount += kReservedVaryingForGLLineRasterization;
+        reservedVaryingComponentCount += kReservedVaryingComponentsForGLLineRasterization;
     }
     if (getFeatures().supportsTransformFeedbackExtension.enabled)
     {
-        reservedVaryingVectorCount += kReservedVaryingForTransformFeedbackExtension;
+        reservedVaryingComponentCount += kReservedVaryingComponentsForTransformFeedbackExtension;
     }
+
+    // The max varying vectors should not include gl_Position.
+    // The gles2.0 section 2.10 states that "gl_Position is not a varying variable and does
+    // not count against this limit.", but the Vulkan spec has no such mention in its Built-in
+    // vars section. It is implicit that we need to actually reserve it for Vulkan in that case.
+    //
+    // Note that this exception for gl_Position does not apply to MAX_VERTEX_OUTPUT_COMPONENTS and
+    // similar limits.
+    const GLint reservedVaryingVectorCount = reservedVaryingComponentCount / 4 + 1;
 
     const GLint maxVaryingCount =
         std::min(limitsVk.maxVertexOutputComponents, limitsVk.maxFragmentInputComponents);
     mNativeCaps.maxVaryingVectors =
         LimitToInt((maxVaryingCount / kComponentsPerVector) - reservedVaryingVectorCount);
     mNativeCaps.maxVertexOutputComponents =
-        LimitToInt(limitsVk.maxVertexOutputComponents) - reservedVaryingVectorCount * 4;
+        LimitToInt(limitsVk.maxVertexOutputComponents) - reservedVaryingComponentCount;
     mNativeCaps.maxFragmentInputComponents =
-        LimitToInt(limitsVk.maxFragmentInputComponents) - reservedVaryingVectorCount * 4;
+        LimitToInt(limitsVk.maxFragmentInputComponents) - reservedVaryingComponentCount;
 
     mNativeCaps.maxTransformFeedbackInterleavedComponents =
         gl::IMPLEMENTATION_MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS;
@@ -863,6 +873,11 @@ void RendererVk::ensureCapsInitialized() const
     mNativeCaps.maxFramebufferSamples = mNativeCaps.maxSamples;
 
     mNativeCaps.subPixelBits = limitsVk.subPixelPrecisionBits;
+
+    // Enable GL_EXT_shader_framebuffer_fetch_non_coherent
+    // For supporting this extension, gl::IMPLEMENTATION_MAX_DRAW_BUFFERS is used.
+    mNativeExtensions.shaderFramebufferFetchNonCoherentEXT =
+        mNativeCaps.maxDrawBuffers >= gl::IMPLEMENTATION_MAX_DRAW_BUFFERS;
 
     // Enable Program Binary extension.
     mNativeExtensions.getProgramBinaryOES = true;
@@ -915,12 +930,18 @@ void RendererVk::ensureCapsInitialized() const
             mFeatures.supportsTransformFeedbackExtension.enabled &&
             mFeatures.exposeNonConformantExtensionsAndVersions.enabled;
         mNativeCaps.maxFramebufferLayers = LimitToInt(limitsVk.maxFramebufferLayers);
-        mNativeCaps.layerProvokingVertex = GL_LAST_VERTEX_CONVENTION_EXT;
+
+        // If the provoking vertex feature is enabled, angle specifies to use
+        // the "last" convention in order to match GL behavior. Otherwise, use
+        // "first" as vulkan follows this convention for provoking vertex.
+        mNativeCaps.layerProvokingVertex = (mFeatures.provokingVertex.enabled)
+                                               ? GL_LAST_VERTEX_CONVENTION_EXT
+                                               : GL_FIRST_VERTEX_CONVENTION_EXT;
 
         mNativeCaps.maxGeometryInputComponents =
-            LimitToInt(limitsVk.maxGeometryInputComponents) - reservedVaryingVectorCount * 4;
+            LimitToInt(limitsVk.maxGeometryInputComponents) - reservedVaryingComponentCount;
         mNativeCaps.maxGeometryOutputComponents =
-            LimitToInt(limitsVk.maxGeometryOutputComponents) - reservedVaryingVectorCount * 4;
+            LimitToInt(limitsVk.maxGeometryOutputComponents) - reservedVaryingComponentCount;
         mNativeCaps.maxGeometryOutputVertices = LimitToInt(limitsVk.maxGeometryOutputVertices);
         mNativeCaps.maxGeometryTotalOutputComponents =
             LimitToInt(limitsVk.maxGeometryTotalOutputComponents);

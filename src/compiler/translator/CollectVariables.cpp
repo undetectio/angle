@@ -196,8 +196,6 @@ class CollectVariablesTraverser : public TIntermTraverser
     bool mVertexIDAdded;
     bool mPointSizeAdded;
     bool mDrawIDAdded;
-    bool mBaseVertexAdded;
-    bool mBaseInstanceAdded;
 
     // Vertex Shader and Geometry Shader builtins
     bool mPositionAdded;
@@ -285,8 +283,6 @@ CollectVariablesTraverser::CollectVariablesTraverser(
       mVertexIDAdded(false),
       mPointSizeAdded(false),
       mDrawIDAdded(false),
-      mBaseVertexAdded(false),
-      mBaseInstanceAdded(false),
       mPositionAdded(false),
       mClipDistanceAdded(false),
       mCullDistanceAdded(false),
@@ -512,6 +508,29 @@ void CollectVariablesTraverser::visitSymbol(TIntermSymbol *symbol)
             mNumSamplesAdded = true;
         }
     }
+    else if (symbolName == "gl_LastFragData" && qualifier == EvqGlobal)
+    {
+        // If gl_LastFragData is redeclared, the qualifier of redeclaration is EvqGlobal, and it
+        // makes "gl_LastFragData" can't be collected in this function. That's because
+        // "gl_LastFragData" is redeclared like below. E.g., "highp vec4
+        // gl_LastFragData[gl_MaxDrawBuffers];" So, if gl_LastFragData can be parsed with a correct
+        // qualifier in PasreContext.cpp, this code isn't needed.
+        if (!mLastFragDataAdded)
+        {
+            ShaderVariable info;
+
+            const TType &type = symbol->getType();
+
+            info.name       = symbolName.data();
+            info.mappedName = symbolName.data();
+            setFieldOrVariableProperties(type, true, false, false, &info);
+            info.active = true;
+
+            mInputVaryings->push_back(info);
+            mLastFragDataAdded = true;
+        }
+        return;
+    }
     else
     {
         switch (qualifier)
@@ -521,6 +540,7 @@ void CollectVariablesTraverser::visitSymbol(TIntermSymbol *symbol)
                 var = FindVariable(symbolName, mAttribs);
                 break;
             case EvqFragmentOut:
+            case EvqFragmentInOut:
                 var = FindVariable(symbolName, mOutputVariables);
                 break;
             case EvqUniform:
@@ -590,12 +610,6 @@ void CollectVariablesTraverser::visitSymbol(TIntermSymbol *symbol)
                 return;
             case EvqDrawID:
                 recordBuiltInAttributeUsed(symbol->variable(), &mDrawIDAdded);
-                return;
-            case EvqBaseVertex:
-                recordBuiltInAttributeUsed(symbol->variable(), &mBaseVertexAdded);
-                return;
-            case EvqBaseInstance:
-                recordBuiltInAttributeUsed(symbol->variable(), &mBaseInstanceAdded);
                 return;
             case EvqLastFragData:
                 recordBuiltInVaryingUsed(symbol->variable(), &mLastFragDataAdded, mInputVaryings);
@@ -1084,8 +1098,8 @@ bool CollectVariablesTraverser::visitDeclaration(Visit, TIntermDeclaration *node
     TQualifier qualifier          = typedNode.getQualifier();
 
     bool isShaderVariable = qualifier == EvqAttribute || qualifier == EvqVertexIn ||
-                            qualifier == EvqFragmentOut || qualifier == EvqUniform ||
-                            IsVarying(qualifier);
+                            qualifier == EvqFragmentOut || qualifier == EvqFragmentInOut ||
+                            qualifier == EvqUniform || IsVarying(qualifier);
 
     if (typedNode.getBasicType() != EbtInterfaceBlock && !isShaderVariable)
     {
@@ -1144,6 +1158,7 @@ bool CollectVariablesTraverser::visitDeclaration(Visit, TIntermDeclaration *node
                     mAttribs->push_back(recordAttribute(variable));
                     break;
                 case EvqFragmentOut:
+                case EvqFragmentInOut:
                     mOutputVariables->push_back(recordOutputVariable(variable));
                     break;
                 case EvqUniform:

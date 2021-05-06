@@ -136,10 +136,15 @@ class PackedAttachmentIndex final
     {
         return mAttachmentIndex != other.mAttachmentIndex;
     }
+    constexpr bool operator<(const PackedAttachmentIndex &other) const
+    {
+        return mAttachmentIndex < other.mAttachmentIndex;
+    }
 
   private:
     uint32_t mAttachmentIndex;
 };
+using PackedAttachmentCount                                    = PackedAttachmentIndex;
 static constexpr PackedAttachmentIndex kAttachmentIndexInvalid = PackedAttachmentIndex(-1);
 static constexpr PackedAttachmentIndex kAttachmentIndexZero    = PackedAttachmentIndex(0);
 
@@ -871,6 +876,8 @@ struct PerfCounters
     uint32_t stencilAttachmentResolves;
     uint32_t readOnlyDepthStencilRenderPasses;
     uint32_t descriptorSetAllocations;
+    uint32_t shaderBuffersDescriptorSetCacheHits;
+    uint32_t shaderBuffersDescriptorSetCacheMisses;
 };
 
 // A Vulkan image level index.

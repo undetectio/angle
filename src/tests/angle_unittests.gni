@@ -48,6 +48,7 @@ angle_unittests_sources = [
   "../libANGLE/renderer/TextureImpl_mock.h",
   "../libANGLE/renderer/TransformFeedbackImpl_mock.h",
   "../libANGLE/renderer/serial_utils_unittest.cpp",
+  "../libANGLE/serializer/JsonSerializer_unittest.cpp",
   "angle_unittests_utils.h",
   "preprocessor_tests/MockDiagnostics.h",
   "preprocessor_tests/MockDirectiveHandler.h",
@@ -92,6 +93,7 @@ angle_unittests_compiler_tests_sources = [
   "compiler_tests/EXT_blend_func_extended_test.cpp",
   "compiler_tests/EXT_clip_cull_distance_test.cpp",
   "compiler_tests/EXT_frag_depth_test.cpp",
+  "compiler_tests/EXT_shader_framebuffer_fetch_test.cpp",
   "compiler_tests/EXT_shader_texture_lod_test.cpp",
   "compiler_tests/EXT_shadow_samplers_test.cpp",
   "compiler_tests/EmulateGLBaseVertexBaseInstance_test.cpp",
@@ -122,7 +124,6 @@ angle_unittests_compiler_tests_sources = [
   "compiler_tests/QualificationOrder_test.cpp",
   "compiler_tests/RecordConstantPrecision_test.cpp",
   "compiler_tests/RegenerateStructNames_test.cpp",
-  "compiler_tests/RemovePow_test.cpp",
   "compiler_tests/RemoveUnreferencedVariables_test.cpp",
   "compiler_tests/SamplerMultisample_test.cpp",
   "compiler_tests/SamplerVideoWEBGL_test.cpp",
@@ -153,6 +154,9 @@ angle_unittests_hlsl_sources = [
   "compiler_tests/HLSLOutput_test.cpp",
   "compiler_tests/UnrollFlatten_test.cpp",
 ]
+
+angle_unittests_gl_sources =
+    [ "../libANGLE/renderer/gl/DisplayGL_unittest.cpp" ]
 
 if (is_android) {
   angle_unittests_sources +=

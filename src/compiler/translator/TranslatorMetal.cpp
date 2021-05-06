@@ -1,12 +1,12 @@
 //
-// Copyright (c) 2019 The ANGLE Project Authors. All rights reserved.
+// Copyright 2019 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
 // TranslatorMetal:
 //   A GLSL-based translator that outputs shaders that fit GL_KHR_vulkan_glsl.
 //   It takes into account some considerations for Metal backend also.
-//   The shaders are then fed into glslang to spit out SPIR-V (libANGLE-side).
+//   The shaders are then fed into glslang to spit out SPIR-V.
 //   See: https://www.khronos.org/registry/vulkan/specs/misc/GL_KHR_vulkan_glsl.txt
 //
 //   The SPIR-V will then be translated to Metal Shading Language later in Metal backend.
@@ -179,16 +179,12 @@ bool TranslatorMetal::translate(TIntermBlock *root,
                                 ShCompileOptions compileOptions,
                                 PerformanceDiagnostics *perfDiagnostics)
 {
-    TInfoSinkBase &sink = getInfoSink().obj;
-
-    TOutputVulkanGLSL outputGLSL(sink, getArrayIndexClampingStrategy(), getHashFunction(),
-                                 getNameMap(), &getSymbolTable(), getShaderType(),
-                                 getShaderVersion(), getOutputType(), false, true, compileOptions);
+    TInfoSinkBase sink;
 
     SpecConstMetal specConst(&getSymbolTable(), compileOptions, getShaderType());
     DriverUniformMetal driverUniforms;
-    if (!TranslatorVulkan::translateImpl(root, compileOptions, perfDiagnostics, &specConst,
-                                         &driverUniforms, &outputGLSL))
+    if (!TranslatorVulkan::translateImpl(sink, root, compileOptions, perfDiagnostics, &specConst,
+                                         &driverUniforms))
     {
         return false;
     }
@@ -210,14 +206,14 @@ bool TranslatorMetal::translate(TIntermBlock *root,
         }
 
         // Insert rasterizer discard logic
-        if (!insertRasterizerDiscardLogic(root))
+        if (!insertRasterizerDiscardLogic(sink, root))
         {
             return false;
         }
     }
     else if (getShaderType() == GL_FRAGMENT_SHADER)
     {
-        if (!insertSampleMaskWritingLogic(root, &driverUniforms))
+        if (!insertSampleMaskWritingLogic(sink, root, &driverUniforms))
         {
             return false;
         }
@@ -244,9 +240,12 @@ bool TranslatorMetal::translate(TIntermBlock *root,
     }
 
     // Write translated shader.
+    TOutputVulkanGLSL outputGLSL(sink, getArrayIndexClampingStrategy(), getHashFunction(),
+                                 getNameMap(), &getSymbolTable(), getShaderType(),
+                                 getShaderVersion(), getOutputType(), false, true, compileOptions);
     root->traverse(&outputGLSL);
 
-    return true;
+    return compileToSpirv(sink);
 }
 
 // Metal needs to inverse the depth if depthRange is is reverse order, i.e. depth near > depth far
@@ -280,10 +279,14 @@ bool TranslatorMetal::transformDepthBeforeCorrection(TIntermBlock *root,
 // Add sample_mask writing to main, guarded by the specialization constant
 // kCoverageMaskEnabledConstName
 ANGLE_NO_DISCARD bool TranslatorMetal::insertSampleMaskWritingLogic(
+    TInfoSinkBase &sink,
     TIntermBlock *root,
     const DriverUniformMetal *driverUniforms)
 {
-    TInfoSinkBase &sink       = getInfoSink().obj;
+    // This transformation leaves the tree in an inconsistent state by using a variable that's
+    // defined in text, outside of the knowledge of the AST.
+    mValidateASTOptions.validateVariableReferences = false;
+
     TSymbolTable *symbolTable = &getSymbolTable();
 
     // Insert coverageMaskEnabled specialization constant and sample_mask writing function.
@@ -334,9 +337,13 @@ ANGLE_NO_DISCARD bool TranslatorMetal::insertSampleMaskWritingLogic(
     return RunAtTheEndOfShader(this, root, ifCall, symbolTable);
 }
 
-ANGLE_NO_DISCARD bool TranslatorMetal::insertRasterizerDiscardLogic(TIntermBlock *root)
+ANGLE_NO_DISCARD bool TranslatorMetal::insertRasterizerDiscardLogic(TInfoSinkBase &sink,
+                                                                    TIntermBlock *root)
 {
-    TInfoSinkBase &sink       = getInfoSink().obj;
+    // This transformation leaves the tree in an inconsistent state by using a variable that's
+    // defined in text, outside of the knowledge of the AST.
+    mValidateASTOptions.validateVariableReferences = false;
+
     TSymbolTable *symbolTable = &getSymbolTable();
 
     // Insert rasterizationDisabled specialization constant.

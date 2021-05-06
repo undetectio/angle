@@ -148,14 +148,17 @@ enum TBasicType
     EbtUImageBuffer,
     EbtGuardImageEnd = EbtUImageBuffer,
 
-    EbtSubpassInput,
+    // Subpass Input
+    EbtGuardSubpassInputBegin,
+    EbtSubpassInput = EbtGuardSubpassInputBegin,
     EbtISubpassInput,
     EbtUSubpassInput,
     EbtSubpassInputMS,
     EbtISubpassInputMS,
     EbtUSubpassInputMS,
+    EbtGuardSubpassInputEnd = EbtUSubpassInputMS,
 
-    EbtLastSimpleType = EbtUSubpassInputMS,
+    EbtLastSimpleType = EbtGuardSubpassInputEnd,
 
     EbtStruct,
     EbtInterfaceBlock,
@@ -221,9 +224,14 @@ inline bool IsAtomicCounter(TBasicType type)
     return type == EbtAtomicCounter;
 }
 
+inline bool IsSubpassInputType(TBasicType type)
+{
+    return type >= EbtGuardSubpassInputBegin && type <= EbtGuardSubpassInputEnd;
+}
+
 inline bool IsOpaqueType(TBasicType type)
 {
-    return IsSampler(type) || IsImage(type) || IsAtomicCounter(type);
+    return IsSampler(type) || IsImage(type) || IsAtomicCounter(type) || IsSubpassInputType(type);
 }
 
 inline bool IsIntegerSampler(TBasicType type)
@@ -928,6 +936,8 @@ enum TQualifier
     EvqVertexOut,    // Vertex shader output
     EvqFragmentIn,   // Fragment shader input
 
+    EvqFragmentInOut,  // EXT_shader_framebuffer_fetch qualifier
+
     // parameters
     EvqIn,
     EvqOut,
@@ -943,9 +953,6 @@ enum TQualifier
     EvqPointSize,
 
     EvqDrawID,  // ANGLE_multi_draw
-
-    EvqBaseVertex,    // ANGLE_base_vertex_base_instance
-    EvqBaseInstance,  // ANGLE_base_vertex_base_instance
 
     // built-ins read by fragment shader
     EvqFragCoord,
@@ -1094,6 +1101,7 @@ inline bool IsShaderOut(TQualifier qualifier)
         case EvqCentroidOut:
         case EvqSampleOut:
         case EvqPatchOut:
+        case EvqFragmentInOut:
             return true;
         default:
             return false;
@@ -1203,7 +1211,8 @@ struct TLayoutQualifier
                imageInternalFormat == EiifUnspecified && primitiveType == EptUndefined &&
                invocations == 0 && maxVertices == -1 && vertices == 0 &&
                tesPrimitiveType == EtetUndefined && tesVertexSpacingType == EtetUndefined &&
-               tesOrderingType == EtetUndefined && tesPointType == EtetUndefined && index == -1;
+               tesOrderingType == EtetUndefined && tesPointType == EtetUndefined && index == -1 &&
+               inputAttachmentIndex == -1 && noncoherent == false;
     }
 
     bool isCombinationValid() const
@@ -1212,6 +1221,7 @@ struct TLayoutQualifier
         bool numViewsSet            = (numViews != -1);
         bool geometryShaderSpecified =
             (primitiveType != EptUndefined) || (invocations != 0) || (maxVertices != -1);
+        bool subpassInputSpecified = (inputAttachmentIndex != -1);
         bool otherLayoutQualifiersSpecified =
             (location != -1 || binding != -1 || index != -1 || matrixPacking != EmpUnspecified ||
              blockStorage != EbsUnspecified || imageInternalFormat != EiifUnspecified);
@@ -1221,7 +1231,8 @@ struct TLayoutQualifier
         // qualifiers.
         return (workGroupSizeSpecified ? 1 : 0) + (numViewsSet ? 1 : 0) + (yuv ? 1 : 0) +
                    (earlyFragmentTests ? 1 : 0) + (otherLayoutQualifiersSpecified ? 1 : 0) +
-                   (geometryShaderSpecified ? 1 : 0) <=
+                   (geometryShaderSpecified ? 1 : 0) + (subpassInputSpecified ? 1 : 0) +
+                   (noncoherent ? 1 : 0) <=
                1;
     }
 
@@ -1268,6 +1279,10 @@ struct TLayoutQualifier
     // EXT_blend_func_extended fragment output layout qualifier
     int index;
 
+    // EXT_shader_framebuffer_fetch layout qualifiers.
+    int inputAttachmentIndex;
+    bool noncoherent;
+
   private:
     explicit constexpr TLayoutQualifier(int /*placeholder*/)
         : location(-1),
@@ -1289,7 +1304,9 @@ struct TLayoutQualifier
           tesVertexSpacingType(EtetUndefined),
           tesOrderingType(EtetUndefined),
           tesPointType(EtetUndefined),
-          index(-1)
+          index(-1),
+          inputAttachmentIndex(-1),
+          noncoherent(false)
     {}
 };
 
@@ -1372,8 +1389,6 @@ inline const char *getQualifierString(TQualifier q)
     case EvqPosition:               return "Position";
     case EvqPointSize:              return "PointSize";
     case EvqDrawID:                 return "DrawID";
-    case EvqBaseVertex:             return "BaseVertex";
-    case EvqBaseInstance:           return "BaseInstance";
     case EvqFragCoord:              return "FragCoord";
     case EvqFrontFacing:            return "FrontFacing";
     case EvqHelperInvocation:       return "HelperInvocation";
@@ -1389,6 +1404,7 @@ inline const char *getQualifierString(TQualifier q)
     case EvqLayer:                  return "Layer";
     case EvqLastFragColor:          return "LastFragColor";
     case EvqLastFragData:           return "LastFragData";
+    case EvqFragmentInOut:          return "inout";
     case EvqSmoothOut:              return "smooth out";
     case EvqCentroidOut:            return "smooth centroid out";
     case EvqFlatOut:                return "flat out";

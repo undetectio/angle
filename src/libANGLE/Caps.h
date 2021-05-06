@@ -27,6 +27,8 @@ struct TextureCaps
 {
     TextureCaps();
     TextureCaps(const TextureCaps &other);
+    TextureCaps &operator=(const TextureCaps &other);
+
     ~TextureCaps();
 
     // Supports for basic texturing: glTexImage, glTexSubImage, etc
@@ -109,6 +111,7 @@ struct Extensions
     // GL_OES_texture_half_float, GL_OES_texture_half_float_linear
     // GL_OES_texture_float, GL_OES_texture_float_linear
     // GL_EXT_texture_rg
+    // GL_EXT_texture_type_2_10_10_10_REV
     // GL_EXT_texture_compression_dxt1, GL_ANGLE_texture_compression_dxt3,
     // GL_ANGLE_texture_compression_dxt5
     // GL_KHR_texture_compression_astc_ldr, GL_OES_texture_compression_astc.
@@ -178,9 +181,6 @@ struct Extensions
     bool textureHalfFloat       = false;
     bool textureHalfFloatLinear = false;
 
-    // GL_EXT_texture_type_2_10_10_10_REV
-    bool textureFormat2101010REV = false;
-
     // GL_OES_texture_float and GL_OES_texture_float_linear
     // Implies that TextureCaps for GL_RGB32F, GL_RGBA32F, GL_ALPHA16F_EXT, GL_LUMINANCE16F_EXT and
     // GL_LUMINANCE_ALPHA16F_EXT exist
@@ -191,6 +191,9 @@ struct Extensions
     // Implies that TextureCaps for GL_R8, GL_RG8 (and floating point R/RG texture formats if
     // floating point extensions are also present) exist
     bool textureRG = false;
+
+    // GL_EXT_texture_type_2_10_10_10_REV
+    bool textureFormat2101010REV = false;
 
     // GL_EXT_texture_compression_dxt1, GL_ANGLE_texture_compression_dxt3 and
     // GL_ANGLE_texture_compression_dxt5 Implies that TextureCaps exist for
@@ -507,6 +510,12 @@ struct Extensions
     // GL_OES_texture_border_clamp
     bool textureBorderClampOES = false;
 
+    // GL_EXT_texture_border_clamp
+    bool textureBorderClampEXT = false;
+
+    // Any version of the texture border clamp extension
+    bool textureBorderClampAny() const { return (textureBorderClampOES || textureBorderClampEXT); }
+
     // GL_EXT_texture_sRGB_decode
     bool textureSRGBDecode = false;
 
@@ -592,6 +601,9 @@ struct Extensions
 
     // GL_ANGLE_multiview_multisample
     bool multiviewMultisample = false;
+
+    // GL_KHR_blend_equation_advanced
+    bool blendEquationAdvancedKHR = false;
 
     // GL_EXT_blend_func_extended
     bool blendFuncExtended          = false;
@@ -716,6 +728,12 @@ struct Extensions
 
     // GL_EXT_clip_cull_distance
     bool clipCullDistanceEXT = false;
+
+    // GL_ANGLE_get_serialized_context_string
+    bool getSerializedContextStringANGLE = false;
+
+    // GL_EXT_primitive_bounding_box
+    bool primitiveBoundingBoxEXT = false;
 };
 
 // Pointer to a boolean memeber of the Extensions struct
@@ -773,6 +791,12 @@ struct Limitations
     // Renderer doesn't support GL_TEXTURE_COMPARE_MODE=GL_NONE on a shadow sampler.
     // TODO(http://anglebug.com/5231): add validation code to front-end.
     bool noShadowSamplerCompareModeNone = false;
+
+    // PVRTC1 textures must be squares.
+    bool squarePvrtc1 = false;
+
+    // ETC1 texture support is emulated.
+    bool emulatedEtc1 = false;
 };
 
 struct TypePrecision
@@ -797,6 +821,8 @@ struct Caps
 {
     Caps();
     Caps(const Caps &other);
+    Caps &operator=(const Caps &other);
+
     ~Caps();
 
     // If the values could be got by using GetIntegeri_v, they should
@@ -1125,6 +1151,9 @@ struct DisplayExtensions
     // EGL_ANGLE_iosurface_client_buffer
     bool iosurfaceClientBuffer = false;
 
+    // EGL_ANGLE_metal_texture_client_buffer
+    bool mtlTextureClientBuffer = false;
+
     // EGL_ANGLE_create_context_extensions_enabled
     bool createContextExtensionsEnabled = false;
 
@@ -1214,6 +1243,9 @@ struct DisplayExtensions
 
     // EGL_ANGLE_external_context_and_surface
     bool externalContextAndSurface = false;
+
+    // EGL_EXT_buffer_age
+    bool bufferAgeEXT = false;
 };
 
 struct DeviceExtensions
@@ -1231,6 +1263,9 @@ struct DeviceExtensions
 
     // EGL_ANGLE_device_eagl
     bool deviceEAGL = false;
+
+    // EGL_ANGLE_device_metal
+    bool deviceMetal = false;
 };
 
 struct ClientExtensions
