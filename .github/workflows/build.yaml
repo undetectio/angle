@@ -9,7 +9,7 @@ jobs:
     strategy:
         matrix:
           os:
-          - ubuntu-18.04
+          - ubuntu-latest
           - windows-latest
           - macOS-latest
     name: Build on ${{ matrix.os }}
@@ -33,7 +33,8 @@ jobs:
           export PATH=$(pwd)/depot_tools:$PATH
           python scripts/bootstrap.py
           gclient sync
-          [[ "$OSTYPE" == "linux-gnu"* ]] && ./build/install-build-deps.sh # Run on Linux only
+          # See: https://chromium.googlesource.com/chromium/src/+/master/build/install-build-deps.sh
+          [[ "$OSTYPE" == "linux-gnu"* ]] && ./build/install-build-deps.sh --no-syms --no-arm --no-prompt # Run on Linux only
           gn gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"x64\""
           autoninja -C out/Release
       -
