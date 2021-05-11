@@ -35,7 +35,7 @@ jobs:
           gclient sync
           # See: https://chromium.googlesource.com/chromium/src/+/master/build/install-build-deps.sh
           [[ "$OSTYPE" == "linux-gnu"* ]] && sudo apt-get -y remove php7.4-common && ./build/install-build-deps.sh --no-syms --no-arm --no-prompt # Run on Linux only
-          gn gen out/Release "--args=is_debug=false dcheck_always_on=false target_cpu=\"x64\" is_official_build=true chrome_pgo_phase=0"
+          gn gen out/Release "--args=is_debug=false dcheck_always_on=false target_cpu=\"x64\" is_official_build=true chrome_pgo_phase=0 is_cfi=false"
           autoninja -C out/Release
       -
         name: Build Windows
@@ -48,7 +48,7 @@ jobs:
           export PATH=$(pwd)/depot_tools:$PATH
           python scripts/bootstrap.py
           gclient.bat sync
-          gn.bat gen out/Release "--args=is_debug=false dcheck_always_on=false target_cpu=\"x64\" is_official_build=true chrome_pgo_phase=0" # maybe add: target_os=\"winuwp\"
+          gn.bat gen out/Release "--args=is_debug=false dcheck_always_on=false target_cpu=\"x64\" is_official_build=true chrome_pgo_phase=0 is_cfi=false" # maybe add: target_os=\"winuwp\"
           autoninja.bat -C out/Release
       -
         name: Upload artifact on Linux
