@@ -36,12 +36,6 @@
 #include "libANGLE/trace.h"
 #include "platform/PlatformMethods.h"
 
-// TODO(ynovikov): http://anglebug.com/5905 remove once vulkan headers 1.2.177 roll into Chrome
-#ifndef VK_QCOM_RENDER_PASS_STORE_OPS_EXTENSION_NAME
-#    define VK_QCOM_RENDER_PASS_STORE_OPS_EXTENSION_NAME \
-        VK_QCOM_render_pass_store_ops_EXTENSION_NAME
-#endif  // VK_QCOM_RENDER_PASS_STORE_OPS_EXTENSION_NAME
-
 // Consts
 namespace
 {
@@ -843,9 +837,20 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
                                      const char *wsiExtension,
                                      const char *wsiLayer)
 {
+    bool canLoadDebugUtils = true;
 #if defined(ANGLE_SHARED_LIBVULKAN)
     // Set all vk* function ptrs
     ANGLE_VK_TRY(displayVk, volkInitialize());
+
+    uint32_t ver = volkGetInstanceVersion();
+    if (!IsAndroid() && VK_API_VERSION_MAJOR(ver) == 1 &&
+        (VK_API_VERSION_MINOR(ver) < 1 ||
+         (VK_API_VERSION_MINOR(ver) == 1 && VK_API_VERSION_PATCH(ver) < 91)))
+    {
+        // http://crbug.com/1205999 - non-Android Vulkan Loader versions before 1.1.91 have a bug
+        // which prevents loading VK_EXT_debug_utils function pointers.
+        canLoadDebugUtils = false;
+    }
 #endif  // defined(ANGLE_SHARED_LIBVULKAN)
 
     mDisplay                         = display;
@@ -934,7 +939,7 @@ angle::Result RendererVk::initialize(DisplayVk *displayVk,
     vk::ExtensionNameList enabledInstanceExtensions;
     enabledInstanceExtensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
     enabledInstanceExtensions.push_back(wsiExtension);
-    mEnableDebugUtils = mEnableValidationLayers &&
+    mEnableDebugUtils = canLoadDebugUtils && mEnableValidationLayers &&
                         ExtensionFound(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, instanceExtensionNames);
 
     bool enableDebugReport =
@@ -1217,6 +1222,10 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mDepthStencilResolveProperties.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;
 
+    mCustomBorderColorFeatures = {};
+    mCustomBorderColorFeatures.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT;
+
     mMultisampledRenderToSingleSampledFeatures = {};
     mMultisampledRenderToSingleSampledFeatures.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_FEATURES_EXT;
@@ -1320,6 +1329,12 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
         vk::AddToPNextChain(&deviceProperties, &mDriverProperties);
     }
 
+    // Query custom border color features
+    if (ExtensionFound(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME, deviceExtensionNames))
+    {
+        vk::AddToPNextChain(&deviceFeatures, &mCustomBorderColorFeatures);
+    }
+
     // Query subgroup properties
     vk::AddToPNextChain(&deviceProperties, &mSubgroupProperties);
 
@@ -1358,6 +1373,7 @@ void RendererVk::queryDeviceExtensionFeatures(const vk::ExtensionNameList &devic
     mIndexTypeUint8Features.pNext                    = nullptr;
     mSubgroupProperties.pNext                        = nullptr;
     mExternalMemoryHostProperties.pNext              = nullptr;
+    mCustomBorderColorFeatures.pNext                 = nullptr;
     mShaderFloat16Int8Features.pNext                 = nullptr;
     mDepthStencilResolveProperties.pNext             = nullptr;
     mMultisampledRenderToSingleSampledFeatures.pNext = nullptr;
@@ -1694,6 +1710,12 @@ angle::Result RendererVk::initializeDevice(DisplayVk *displayVk, uint32_t queueF
     {
         enabledDeviceExtensions.push_back(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME);
         vk::AddToPNextChain(&createInfo, &mTransformFeedbackFeatures);
+    }
+
+    if (getFeatures().supportsCustomBorderColorEXT.enabled)
+    {
+        enabledDeviceExtensions.push_back(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
+        vk::AddToPNextChain(&createInfo, &mCustomBorderColorFeatures);
     }
 
     if (getFeatures().supportsIndexTypeUint8.enabled)
@@ -2302,6 +2324,11 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
                             (!mFeatures.supportsTransformFeedbackExtension.enabled &&
                              mPhysicalDeviceFeatures.vertexPipelineStoresAndAtomics == VK_TRUE));
 
+    // TODO: http://anglebug.com/5927 - drop dependency on customBorderColorWithoutFormat.
+    ANGLE_FEATURE_CONDITION(&mFeatures, supportsCustomBorderColorEXT,
+                            (mCustomBorderColorFeatures.customBorderColors == VK_TRUE &&
+                             mCustomBorderColorFeatures.customBorderColorWithoutFormat == VK_TRUE));
+
     ANGLE_FEATURE_CONDITION(&mFeatures, disableFifoPresentMode, IsLinux() && isIntel);
 
     ANGLE_FEATURE_CONDITION(&mFeatures, bindEmptyForUnusedDescriptorSets,
@@ -2340,11 +2367,12 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     ANGLE_FEATURE_CONDITION(&mFeatures, enablePreRotateSurfaces,
                             IsAndroid() && supportsNegativeViewport);
 
-    // Currently disabled by default: http://anglebug.com/3078
+    // http://anglebug.com/3078
     ANGLE_FEATURE_CONDITION(
         &mFeatures, enablePrecisionQualifiers,
         !(IsPixel2(mPhysicalDeviceProperties.vendorID, mPhysicalDeviceProperties.deviceID) &&
-          (mPhysicalDeviceProperties.driverVersion < kPixel2DriverWithRelaxedPrecision)));
+          (mPhysicalDeviceProperties.driverVersion < kPixel2DriverWithRelaxedPrecision)) &&
+            !IsPixel4(mPhysicalDeviceProperties.vendorID, mPhysicalDeviceProperties.deviceID));
 
     ANGLE_FEATURE_CONDITION(&mFeatures, preferAggregateBarrierCalls, isNvidia || isAMD || isIntel);
 
@@ -2443,6 +2471,11 @@ void RendererVk::initFeatures(DisplayVk *displayVk,
     // Disabled by default. Only enable it for experimental purpose, as this will cause various
     // tests to fail.
     ANGLE_FEATURE_CONDITION(&mFeatures, forceFragmentShaderPrecisionHighpToMediump, false);
+
+    // Testing shows that on ARM GPU, doing implicit flush at framebuffer boundary improves
+    // performance. Most app traces shows frame time reduced and manhattan 3.1 offscreen score
+    // improves 7%.
+    ANGLE_FEATURE_CONDITION(&mFeatures, preferSubmitAtFBOBoundary, isARM);
 
     angle::PlatformMethods *platform = ANGLEPlatformCurrent();
     platform->overrideFeaturesVk(platform, &mFeatures);

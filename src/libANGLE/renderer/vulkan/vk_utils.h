@@ -341,6 +341,7 @@ class MemoryProperties final : angle::NonCopyable
     angle::Result findCompatibleMemoryIndex(Context *context,
                                             const VkMemoryRequirements &memoryRequirements,
                                             VkMemoryPropertyFlags requestedMemoryPropertyFlags,
+                                            bool isExternalMemory,
                                             VkMemoryPropertyFlags *memoryPropertyFlagsOut,
                                             uint32_t *indexOut) const;
     void destroy();
@@ -529,6 +530,9 @@ class RefCounted : angle::NonCopyable
 
     T &get() { return mObject; }
     const T &get() const { return mObject; }
+
+    // A debug function to validate that the reference count is as expected used for assertions.
+    bool isRefCountAsExpected(uint32_t expectedRefCount) { return mRefCount == expectedRefCount; }
 
   private:
     uint32_t mRefCount;

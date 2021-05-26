@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env vpython
 #
 # [VPYTHON:BEGIN]
 # wheel: <
@@ -60,8 +60,9 @@ def IsWindows():
 
 
 DEFAULT_TEST_SUITE = 'angle_perftests'
-DEFAULT_TEST_PREFIX = '--gtest_filter=TracePerfTest.Run/vulkan_'
+DEFAULT_TEST_PREFIX = 'TracePerfTest.Run/vulkan_'
 DEFAULT_SCREENSHOT_PREFIX = 'angle_vulkan_'
+DEFAULT_BATCH_SIZE = 5
 
 # Filters out stuff like: " I   72.572s run_tests_on_device(96071FFAZ00096) "
 ANDROID_LOGGING_PREFIX = r'I +\d+.\d+s \w+\(\w+\)  '
@@ -204,8 +205,11 @@ def get_skia_gold_keys(args):
             return self.lines
 
     with common.temporary_file() as tempfile_path:
+        sysinfo_env = env.copy()
+        sysinfo_env.pop('GTEST_TOTAL_SHARDS', None)
+        sysinfo_env.pop('GTEST_SHARD_INDEX', None)
         binary = get_binary_name('angle_system_info_test')
-        if run_wrapper(args, [binary, '--vulkan', '-v'], env, tempfile_path):
+        if run_wrapper(args, [binary, '--vulkan', '-v'], sysinfo_env, tempfile_path):
             raise Exception('Error getting system info.')
 
         filter = Filter()
@@ -322,6 +326,82 @@ def upload_test_result_to_skia_gold(args, gold_session_manager, gold_session, go
     return FAIL
 
 
+def _get_batches(traces, batch_size):
+    for i in range(0, len(traces), batch_size):
+        yield traces[i:i + batch_size]
+
+
+def _get_gtest_filter_for_batch(batch):
+    expanded = ['%s%s' % (DEFAULT_TEST_PREFIX, trace) for trace in batch]
+    return '--gtest_filter=%s' % ':'.join(expanded)
+
+
+def _run_tests(args, tests, extra_flags, env, screenshot_dir, results, test_results):
+    keys = get_skia_gold_keys(args)
+
+    with temporary_dir('angle_skia_gold_') as skia_gold_temp_dir:
+        gold_properties = angle_skia_gold_properties.ANGLESkiaGoldProperties(args)
+        gold_session_manager = angle_skia_gold_session_manager.ANGLESkiaGoldSessionManager(
+            skia_gold_temp_dir, gold_properties)
+        gold_session = gold_session_manager.GetSkiaGoldSession(keys)
+
+        traces = [trace.split(' ')[0] for trace in tests]
+
+        if args.isolated_script_test_filter:
+            filtered = []
+            for trace in traces:
+                # Apply test filter if present.
+                full_name = 'angle_restricted_trace_gold_tests.%s' % trace
+                if not fnmatch.fnmatch(full_name, args.isolated_script_test_filter):
+                    logging.info('Skipping test %s because it does not match filter %s' %
+                                 (full_name, args.isolated_script_test_filter))
+                else:
+                    filtered += [trace]
+            traces = filtered
+
+        batches = _get_batches(traces, args.batch_size)
+
+        for batch in batches:
+            with common.temporary_file() as tempfile_path:
+                gtest_filter = _get_gtest_filter_for_batch(batch)
+                cmd = [
+                    args.test_suite,
+                    gtest_filter,
+                    '--render-test-output-dir=%s' % screenshot_dir,
+                    '--one-frame-only',
+                    '--verbose-logging',
+                ] + extra_flags
+
+                result = None
+                for iteration in range(0, args.flaky_retries + 1):
+                    if result != PASS:
+                        if iteration > 0:
+                            logging.info('Test run failed, running retry #%d...' % (iteration + 1))
+                        result = PASS if run_wrapper(args, cmd, env, tempfile_path) == 0 else FAIL
+
+                artifacts = {}
+
+                for trace in batch:
+                    if result == PASS:
+                        result = upload_test_result_to_skia_gold(args, gold_session_manager,
+                                                                 gold_session, gold_properties,
+                                                                 screenshot_dir, trace, artifacts)
+
+                    expected_result = SKIP if result == SKIP else PASS
+                    test_results[trace] = {'expected': expected_result, 'actual': result}
+                    if result == FAIL:
+                        test_results[trace]['is_unexpected'] = True
+                    if len(artifacts) > 0:
+                        test_results[trace]['artifacts'] = artifacts
+                    results['num_failures_by_type'][result] += 1
+
+        return results['num_failures_by_type'][FAIL] == 0
+
+
+def _shard_tests(tests, shard_count, shard_index):
+    return [tests[index] for index in range(shard_index, len(tests), shard_count)]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--isolated-script-test-output', type=str)
@@ -330,6 +410,23 @@ def main():
     parser.add_argument('--test-suite', help='Test suite to run.', default=DEFAULT_TEST_SUITE)
     parser.add_argument('--render-test-output-dir', help='Directory to store screenshots')
     parser.add_argument('--xvfb', help='Start xvfb.', action='store_true')
+    parser.add_argument(
+        '--flaky-retries', help='Number of times to retry failed tests.', type=int, default=0)
+    parser.add_argument(
+        '--shard-count',
+        help='Number of shards for test splitting. Default is 1.',
+        type=int,
+        default=1)
+    parser.add_argument(
+        '--shard-index',
+        help='Index of the current shard for test splitting. Default is 0.',
+        type=int,
+        default=0)
+    parser.add_argument(
+        '--batch-size',
+        help='Number of tests to run in a group. Default: %d' % DEFAULT_BATCH_SIZE,
+        type=int,
+        default=DEFAULT_BATCH_SIZE)
 
     add_skia_gold_args(parser)
 
@@ -337,8 +434,11 @@ def main():
     env = os.environ.copy()
 
     if 'GTEST_TOTAL_SHARDS' in env and int(env['GTEST_TOTAL_SHARDS']) != 1:
-        logging.error('Sharding not yet implemented.')
-        sys.exit(1)
+        if 'GTEST_SHARD_INDEX' not in env:
+            logging.error('Sharding params must be specified together.')
+            sys.exit(1)
+        args.shard_count = int(env['GTEST_TOTAL_SHARDS'])
+        args.shard_index = int(env['GTEST_SHARD_INDEX'])
 
     results = {
         'tests': {},
@@ -353,55 +453,7 @@ def main():
         },
     }
 
-    result_tests = {}
-
-    def run_tests(args, tests, extra_flags, env, screenshot_dir):
-        keys = get_skia_gold_keys(args)
-
-        with temporary_dir('angle_skia_gold_') as skia_gold_temp_dir:
-            gold_properties = angle_skia_gold_properties.ANGLESkiaGoldProperties(args)
-            gold_session_manager = angle_skia_gold_session_manager.ANGLESkiaGoldSessionManager(
-                skia_gold_temp_dir, gold_properties)
-            gold_session = gold_session_manager.GetSkiaGoldSession(keys)
-
-            traces = [trace.split(' ')[0] for trace in tests['traces']]
-            for test in traces:
-
-                # Apply test filter if present.
-                if args.isolated_script_test_filter:
-                    full_name = 'angle_restricted_trace_gold_tests.%s' % test
-                    if not fnmatch.fnmatch(full_name, args.isolated_script_test_filter):
-                        logging.info('Skipping test %s because it does not match filter %s' %
-                                     (full_name, args.isolated_script_test_filter))
-                        continue
-
-                with common.temporary_file() as tempfile_path:
-                    cmd = [
-                        args.test_suite,
-                        DEFAULT_TEST_PREFIX + test,
-                        '--render-test-output-dir=%s' % screenshot_dir,
-                        '--one-frame-only',
-                        '--verbose-logging',
-                    ] + extra_flags
-
-                    result = PASS if run_wrapper(args, cmd, env, tempfile_path) == 0 else FAIL
-
-                    artifacts = {}
-
-                    if result == PASS:
-                        result = upload_test_result_to_skia_gold(args, gold_session_manager,
-                                                                 gold_session, gold_properties,
-                                                                 screenshot_dir, test, artifacts)
-
-                    expected_result = SKIP if result == SKIP else PASS
-                    result_tests[test] = {'expected': expected_result, 'actual': result}
-                    if result == FAIL:
-                        result_tests[test]['is_unexpected'] = True
-                    if len(artifacts) > 0:
-                        result_tests[test]['artifacts'] = artifacts
-                    results['num_failures_by_type'][result] += 1
-
-            return results['num_failures_by_type'][FAIL] == 0
+    test_results = {}
 
     rc = 0
 
@@ -417,15 +469,21 @@ def main():
         with open(json_name) as fp:
             tests = json.load(fp)
 
+        # Split tests according to sharding
+        sharded_tests = _shard_tests(tests['traces'], args.shard_count, args.shard_index)
+
         if args.render_test_output_dir:
-            if not run_tests(args, tests, extra_flags, env, args.render_test_output_dir):
+            if not _run_tests(args, sharded_tests, extra_flags, env, args.render_test_output_dir,
+                              results, test_results):
                 rc = 1
         elif 'ISOLATED_OUTDIR' in env:
-            if not run_tests(args, tests, extra_flags, env, env['ISOLATED_OUTDIR']):
+            if not _run_tests(args, sharded_tests, extra_flags, env, env['ISOLATED_OUTDIR'],
+                              results, test_results):
                 rc = 1
         else:
             with temporary_dir('angle_trace_') as temp_dir:
-                if not run_tests(args, tests, extra_flags, env, temp_dir):
+                if not _run_tests(args, sharded_tests, extra_flags, env, temp_dir, results,
+                                  test_results):
                     rc = 1
 
     except Exception:
@@ -433,8 +491,8 @@ def main():
         results['interrupted'] = True
         rc = 1
 
-    if result_tests:
-        results['tests']['angle_restricted_trace_gold_tests'] = result_tests
+    if test_results:
+        results['tests']['angle_restricted_trace_gold_tests'] = test_results
 
     if args.isolated_script_test_output:
         with open(args.isolated_script_test_output, 'w') as out_file:

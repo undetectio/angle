@@ -2450,6 +2450,7 @@ void Context::drawArraysInstanced(PrimitiveMode mode,
     // No-op if count draws no primitives for given mode
     if (noopDrawInstanced(mode, count, instanceCount))
     {
+        ANGLE_CONTEXT_TRY(mImplementation->handleNoopDrawEvent());
         return;
     }
 
@@ -2469,6 +2470,7 @@ void Context::drawElementsInstanced(PrimitiveMode mode,
     // No-op if count draws no primitives for given mode
     if (noopDrawInstanced(mode, count, instances))
     {
+        ANGLE_CONTEXT_TRY(mImplementation->handleNoopDrawEvent());
         return;
     }
 
@@ -2487,6 +2489,7 @@ void Context::drawElementsBaseVertex(PrimitiveMode mode,
     // No-op if count draws no primitives for given mode
     if (noopDraw(mode, count))
     {
+        ANGLE_CONTEXT_TRY(mImplementation->handleNoopDrawEvent());
         return;
     }
 
@@ -2506,6 +2509,7 @@ void Context::drawElementsInstancedBaseVertex(PrimitiveMode mode,
     // No-op if count draws no primitives for given mode
     if (noopDrawInstanced(mode, count, instancecount))
     {
+        ANGLE_CONTEXT_TRY(mImplementation->handleNoopDrawEvent());
         return;
     }
 
@@ -2525,6 +2529,7 @@ void Context::drawRangeElements(PrimitiveMode mode,
     // No-op if count draws no primitives for given mode
     if (noopDraw(mode, count))
     {
+        ANGLE_CONTEXT_TRY(mImplementation->handleNoopDrawEvent());
         return;
     }
 
@@ -2545,6 +2550,7 @@ void Context::drawRangeElementsBaseVertex(PrimitiveMode mode,
     // No-op if count draws no primitives for given mode
     if (noopDraw(mode, count))
     {
+        ANGLE_CONTEXT_TRY(mImplementation->handleNoopDrawEvent());
         return;
     }
 
@@ -5864,6 +5870,11 @@ void Context::pushDebugGroup(GLenum source, GLuint id, GLsizei length, const GLc
     mState.getDebug().pushGroup(source, id, std::move(msg));
 }
 
+angle::Result Context::handleNoopDrawEvent()
+{
+    return (mImplementation->handleNoopDrawEvent());
+}
+
 void Context::popDebugGroup()
 {
     mState.getDebug().popGroup();
@@ -6369,6 +6380,7 @@ void Context::drawArraysInstancedBaseInstance(PrimitiveMode mode,
 {
     if (noopDraw(mode, count))
     {
+        ANGLE_CONTEXT_TRY(mImplementation->handleNoopDrawEvent());
         return;
     }
 
@@ -6401,6 +6413,7 @@ void Context::drawElementsInstancedBaseVertexBaseInstance(PrimitiveMode mode,
 {
     if (noopDraw(mode, count))
     {
+        ANGLE_CONTEXT_TRY(mImplementation->handleNoopDrawEvent());
         return;
     }
 
@@ -6460,7 +6473,7 @@ GLenum Context::checkFramebufferStatus(GLenum target)
 {
     Framebuffer *framebuffer = mState.getTargetFramebuffer(target);
     ASSERT(framebuffer);
-    return framebuffer->checkStatus(this);
+    return framebuffer->checkStatus(this).status;
 }
 
 void Context::compileShader(ShaderProgramID shader)

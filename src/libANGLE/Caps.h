@@ -285,6 +285,9 @@ struct Extensions
     // GL_EXT_texture_sRGB_R8
     bool sRGBR8EXT = false;
 
+    // GL_EXT_texture_sRGB_RG8
+    bool sRGBRG8EXT = false;
+
     // GL_ANGLE_depth_texture
     bool depthTextureANGLE = false;
 
@@ -734,6 +737,9 @@ struct Extensions
 
     // GL_EXT_primitive_bounding_box
     bool primitiveBoundingBoxEXT = false;
+
+    // GL_ANGLE_relaxed_vertex_attribute_type
+    bool relaxedVertexAttributeTypeANGLE = false;
 };
 
 // Pointer to a boolean memeber of the Extensions struct

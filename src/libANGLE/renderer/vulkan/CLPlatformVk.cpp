@@ -3,23 +3,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// CLPlatformVk.cpp:
-//    Implements the class methods for CLPlatformVk.
-//
+// CLPlatformVk.cpp: Implements the class methods for CLPlatformVk.
 
 #include "libANGLE/renderer/vulkan/CLPlatformVk.h"
 
+#include "libANGLE/renderer/vulkan/CLDeviceVk.h"
+
+#include "libANGLE/CLPlatform.h"
+
 #include "anglebase/no_destructor.h"
 #include "common/angle_version.h"
-
-#include <algorithm>
 
 namespace rx
 {
 
 namespace
 {
-std::string CreateExtensionString(const CLPlatformImpl::ExtensionList &extList)
+
+std::string CreateExtensionString(const NameVersionVector &extList)
 {
     std::string extensions;
     for (const cl_name_version &ext : extList)
@@ -33,25 +34,71 @@ std::string CreateExtensionString(const CLPlatformImpl::ExtensionList &extList)
     }
     return extensions;
 }
-}  // anonymous namespace
 
-CLPlatformVk::CLPlatformVk(Info &&info) : CLPlatformImpl(std::move(info)) {}
+}  // namespace
 
 CLPlatformVk::~CLPlatformVk() = default;
 
-CLPlatformVk::ImplList CLPlatformVk::GetPlatforms()
+CLPlatformImpl::Info CLPlatformVk::createInfo() const
 {
-    ExtensionList extList = {
+    NameVersionVector extList = {
         cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_khr_icd"},
         cl_name_version{CL_MAKE_VERSION(1, 0, 0), "cl_khr_extended_versioning"}};
-    std::string extensions = CreateExtensionString(extList);
 
-    Info info("FULL_PROFILE", std::string(GetVersionString()), GetVersion(), "ANGLE Vulkan",
-              std::move(extensions), std::move(extList), 0u);
+    Info info;
+    info.mProfile.assign("FULL_PROFILE");
+    info.mVersionStr.assign(GetVersionString());
+    info.mVersion = GetVersion();
+    info.mName.assign("ANGLE Vulkan");
+    info.mExtensions.assign(CreateExtensionString(extList));
+    info.mExtensionsWithVersion = std::move(extList);
+    info.mHostTimerRes          = 0u;
+    return info;
+}
 
-    ImplList implList;
-    implList.emplace_back(new CLPlatformVk(std::move(info)));
-    return implList;
+cl::DevicePtrList CLPlatformVk::createDevices(cl::Platform &platform) const
+{
+    cl_device_type type = 0u;  // TODO(jplate) Fetch device type from Vulkan
+    cl::DevicePtrList devices;
+    const cl::Device::CreateImplFunc createImplFunc = [](const cl::Device &device) {
+        return CLDeviceVk::Ptr(new CLDeviceVk(device));
+    };
+    devices.emplace_back(cl::Device::CreateDevice(platform, nullptr, type, createImplFunc));
+    if (!devices.back())
+    {
+        devices.clear();
+    }
+    return devices;
+}
+
+CLContextImpl::Ptr CLPlatformVk::createContext(const cl::Context &context,
+                                               const cl::DeviceRefList &devices,
+                                               cl::ContextErrorCB notify,
+                                               void *userData,
+                                               bool userSync,
+                                               cl_int *errcodeRet)
+{
+    CLContextImpl::Ptr contextImpl;
+    return contextImpl;
+}
+
+CLContextImpl::Ptr CLPlatformVk::createContextFromType(const cl::Context &context,
+                                                       cl_device_type deviceType,
+                                                       cl::ContextErrorCB notify,
+                                                       void *userData,
+                                                       bool userSync,
+                                                       cl_int *errcodeRet)
+{
+    CLContextImpl::Ptr contextImpl;
+    return contextImpl;
+}
+
+void CLPlatformVk::Initialize(const cl_icd_dispatch &dispatch)
+{
+    const cl::Platform::CreateImplFunc createImplFunc = [](const cl::Platform &platform) {
+        return Ptr(new CLPlatformVk(platform));
+    };
+    cl::Platform::CreatePlatform(dispatch, createImplFunc);
 }
 
 const std::string &CLPlatformVk::GetVersionString()
@@ -61,5 +108,7 @@ const std::string &CLPlatformVk::GetVersionString()
         std::to_string(CL_VERSION_MINOR(GetVersion())) + " ANGLE " ANGLE_VERSION_STRING);
     return *sVersion;
 }
+
+CLPlatformVk::CLPlatformVk(const cl::Platform &platform) : CLPlatformImpl(platform) {}
 
 }  // namespace rx

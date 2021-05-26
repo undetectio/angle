@@ -31,6 +31,7 @@
 #include "libANGLE/Shader.h"
 #include "libANGLE/Surface.h"
 #include "libANGLE/VertexArray.h"
+#include "libANGLE/capture/capture_gles_1_0_autogen.h"
 #include "libANGLE/capture/capture_gles_2_0_autogen.h"
 #include "libANGLE/capture/capture_gles_3_0_autogen.h"
 #include "libANGLE/capture/capture_gles_3_1_autogen.h"
@@ -397,7 +398,7 @@ void WriteStringPointerParamReplay(DataTracker *dataTracker,
         counter = dataTracker->getCounters().getAndIncrement(call.entryPoint, param.name);
         dataTracker->getStringCounters().setStringCounter(strings, counter);
 
-        header << "const char *";
+        header << "const char* const ";
         WriteParamStaticVarName(call, param, counter, header);
         header << "[] = { \n";
 
@@ -925,6 +926,21 @@ void MaybeResetResources(std::stringstream &out,
 
             break;
         }
+        case ResourceIDType::ShaderProgram:
+        {
+            ProgramSet &newPrograms = resourceTracker->getNewPrograms();
+
+            // If we have any new programs created and not deleted during the run, delete them now
+            for (const auto &newProgram : newPrograms)
+            {
+                out << "    glDeleteProgram(gShaderProgramMap[" << newProgram.value << "]);\n";
+            }
+
+            // TODO (http://anglebug.com/5968): Handle programs that need regen
+            // This would only happen if a starting program was deleted during the run
+            ASSERT(resourceTracker->getProgramsToRegen().empty());
+            break;
+        }
         default:
             // TODO (http://anglebug.com/4599): Reset more than just buffers
             break;
@@ -1055,24 +1071,6 @@ void WriteCppReplay(bool compression,
         out << "extern \"C\" {\n";
     }
 
-    if (frameIndex == 1)
-    {
-        std::stringstream setupCallStream;
-
-        setupCallStream << "void " << FmtSetupFunction(kNoPartId) << "\n";
-        setupCallStream << "{\n";
-
-        size_t maxClientArraySize = MaxClientArraySize(clientArraySizes);
-
-        WriteInitReplayCall(compression, setupCallStream, context->id(), captureLabel,
-                            maxClientArraySize, readBufferSize);
-        WriteCppReplayFunctionWithParts(context, ReplayFunc::Setup, &dataTracker, frameIndex,
-                                        binaryData, setupCalls, header, setupCallStream, out);
-
-        out << setupCallStream.str();
-        out << "}\n";
-    }
-
     if (frameIndex == frameCount)
     {
         // Emit code to reset back to starting state
@@ -1153,194 +1151,6 @@ void WriteCppReplay(bool compression,
 
         SaveFileHelper saveCpp(cppFilePath);
         saveCpp << headerString << "\n" << outString;
-    }
-}
-
-void WriteCppReplayIndexFiles(bool compression,
-                              const std::string &outDir,
-                              const gl::Context *context,
-                              const std::string &captureLabel,
-                              uint32_t frameCount,
-                              const SurfaceDimensions &drawSurfaceDimensions,
-                              const HasResourceTypeMap &hasResourceType,
-                              bool serializeStateEnabled,
-                              bool writeResetContextCall,
-                              std::vector<uint8_t> &binaryData)
-{
-    const gl::ContextID contextId       = context->id();
-    const egl::Config *config           = context->getConfig();
-    const egl::AttributeMap &attributes = context->getDisplay()->getAttributeMap();
-
-    std::stringstream header;
-    std::stringstream source;
-
-    header << "#pragma once\n";
-    header << "\n";
-    header << "#include <EGL/egl.h>\n";
-    header << "#include <cstdint>\n";
-    header << "\n";
-
-    if (!captureLabel.empty())
-    {
-        header << "namespace " << captureLabel << "\n";
-        header << "{\n";
-    }
-    header << "// Begin Trace Metadata\n";
-    header << "#define ANGLE_REPLAY_VERSION";
-    if (!captureLabel.empty())
-    {
-        std::string captureLabelUpper = captureLabel;
-        angle::ToUpper(&captureLabelUpper);
-        header << "_" << captureLabelUpper;
-    }
-    header << " " << ANGLE_REVISION << "\n";
-    header << "constexpr uint32_t kReplayContextClientMajorVersion = "
-           << context->getClientMajorVersion() << ";\n";
-    header << "constexpr uint32_t kReplayContextClientMinorVersion = "
-           << context->getClientMinorVersion() << ";\n";
-    header << "constexpr EGLint kReplayPlatformType = "
-           << attributes.getAsInt(EGL_PLATFORM_ANGLE_TYPE_ANGLE) << ";\n";
-    header << "constexpr EGLint kReplayDeviceType = "
-           << attributes.getAsInt(EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE) << ";\n";
-    header << "constexpr uint32_t kReplayFrameStart = 1;\n";
-    header << "constexpr uint32_t kReplayFrameEnd = " << frameCount << ";\n";
-    header << "constexpr EGLint kReplayDrawSurfaceWidth = "
-           << drawSurfaceDimensions.at(contextId).width << ";\n";
-    header << "constexpr EGLint kReplayDrawSurfaceHeight = "
-           << drawSurfaceDimensions.at(contextId).height << ";\n";
-    header << "constexpr EGLint kDefaultFramebufferRedBits = "
-           << (config ? std::to_string(config->redSize) : "EGL_DONT_CARE") << ";\n";
-    header << "constexpr EGLint kDefaultFramebufferGreenBits = "
-           << (config ? std::to_string(config->greenSize) : "EGL_DONT_CARE") << ";\n";
-    header << "constexpr EGLint kDefaultFramebufferBlueBits = "
-           << (config ? std::to_string(config->blueSize) : "EGL_DONT_CARE") << ";\n";
-    header << "constexpr EGLint kDefaultFramebufferAlphaBits = "
-           << (config ? std::to_string(config->alphaSize) : "EGL_DONT_CARE") << ";\n";
-    header << "constexpr EGLint kDefaultFramebufferDepthBits = "
-           << (config ? std::to_string(config->depthSize) : "EGL_DONT_CARE") << ";\n";
-    header << "constexpr EGLint kDefaultFramebufferStencilBits = "
-           << (config ? std::to_string(config->stencilSize) : "EGL_DONT_CARE") << ";\n";
-    header << "constexpr bool kIsBinaryDataCompressed = " << (compression ? "true" : "false")
-           << ";\n";
-    header << "constexpr bool kAreClientArraysEnabled = "
-           << (context->getState().areClientArraysEnabled() ? "true" : "false") << ";\n";
-    header << "constexpr bool kbindGeneratesResources = "
-           << (context->getState().isBindGeneratesResourceEnabled() ? "true" : "false") << ";\n";
-    header << "constexpr bool kWebGLCompatibility = "
-           << (context->getState().getExtensions().webglCompatibility ? "true" : "false") << ";\n";
-
-    header << "// End Trace Metadata\n";
-    header << "\n";
-    for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
-    {
-        header << "void " << FmtReplayFunction(contextId, frameIndex) << ";\n";
-    }
-    header << "\n";
-    if (serializeStateEnabled)
-    {
-        for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
-        {
-            header << "const char *" << FmtGetSerializedContextStateFunction(contextId, frameIndex)
-                   << ";\n";
-        }
-        header << "\n";
-    }
-
-    source << "#include \"" << FmtCapturePrefix(contextId, captureLabel) << ".h\"\n";
-    source << "#include \"trace_fixture.h\"\n";
-    source << "\n";
-
-    if (!captureLabel.empty())
-    {
-        source << "using namespace " << captureLabel << ";\n";
-        source << "\n";
-    }
-
-    source << "extern \"C\" {\n";
-    source << "void ReplayFrame(uint32_t frameIndex)\n";
-    source << "{\n";
-    source << "    switch (frameIndex)\n";
-    source << "    {\n";
-    for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
-    {
-        source << "        case " << frameIndex << ":\n";
-        source << "            " << FmtReplayFunction(contextId, frameIndex) << ";\n";
-        source << "            break;\n";
-    }
-    source << "        default:\n";
-    source << "            break;\n";
-    source << "    }\n";
-    source << "}\n";
-    source << "\n";
-
-    if (writeResetContextCall)
-    {
-        source << "void ResetReplay()\n";
-        source << "{\n";
-        source << "    // Reset context is empty because context is destroyed before end "
-                  "frame is reached\n";
-        source << "}\n";
-        source << "\n";
-    }
-
-    if (serializeStateEnabled)
-    {
-        source << "const char *GetSerializedContextState(uint32_t frameIndex)\n";
-        source << "{\n";
-        source << "    switch (frameIndex)\n";
-        source << "    {\n";
-        for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
-        {
-            source << "        case " << frameIndex << ":\n";
-            source << "            return "
-                   << FmtGetSerializedContextStateFunction(contextId, frameIndex) << ";\n";
-        }
-        source << "        default:\n";
-        source << "            return \"\";\n";
-        source << "    }\n";
-        source << "}\n";
-        source << "\n";
-    }
-
-    source << "}  // extern \"C\"\n";
-
-    if (!captureLabel.empty())
-    {
-        header << "} // namespace " << captureLabel << "\n";
-    }
-
-    {
-        std::string headerContents = header.str();
-
-        std::stringstream headerPathStream;
-        headerPathStream << outDir << FmtCapturePrefix(contextId, captureLabel) << ".h";
-        std::string headerPath = headerPathStream.str();
-
-        SaveFileHelper saveHeader(headerPath);
-        saveHeader << headerContents;
-    }
-
-    {
-        std::string sourceContents = source.str();
-
-        std::stringstream sourcePathStream;
-        sourcePathStream << outDir << FmtCapturePrefix(contextId, captureLabel) << ".cpp";
-        std::string sourcePath = sourcePathStream.str();
-
-        SaveFileHelper saveSource(sourcePath);
-        saveSource << sourceContents;
-    }
-
-    {
-        std::stringstream indexPathStream;
-        indexPathStream << outDir << FmtCapturePrefix(contextId, captureLabel) << "_files.txt";
-        std::string indexPath = indexPathStream.str();
-
-        SaveFileHelper saveIndex(indexPath);
-        for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
-        {
-            saveIndex << GetCaptureFileName(contextId, captureLabel, frameIndex, ".cpp") << "\n";
-        }
     }
 }
 
@@ -1870,6 +1680,46 @@ void CaptureUpdateUniformValues(const gl::State &replayState,
     }
 }
 
+void CaptureVertexPointerES1(std::vector<CallCapture> *setupCalls,
+                             gl::State *replayState,
+                             GLuint attribIndex,
+                             const gl::VertexAttribute &attrib,
+                             const gl::VertexBinding &binding)
+{
+    switch (gl::GLES1Renderer::VertexArrayType(attribIndex))
+    {
+        case gl::ClientVertexArrayType::Vertex:
+            Capture(setupCalls,
+                    CaptureVertexPointer(*replayState, true, attrib.format->channelCount,
+                                         attrib.format->vertexAttribType, binding.getStride(),
+                                         attrib.pointer));
+            break;
+        case gl::ClientVertexArrayType::Normal:
+            Capture(setupCalls,
+                    CaptureNormalPointer(*replayState, true, attrib.format->vertexAttribType,
+                                         binding.getStride(), attrib.pointer));
+            break;
+        case gl::ClientVertexArrayType::Color:
+            Capture(setupCalls, CaptureColorPointer(*replayState, true, attrib.format->channelCount,
+                                                    attrib.format->vertexAttribType,
+                                                    binding.getStride(), attrib.pointer));
+            break;
+        case gl::ClientVertexArrayType::PointSize:
+            Capture(setupCalls,
+                    CapturePointSizePointerOES(*replayState, true, attrib.format->vertexAttribType,
+                                               binding.getStride(), attrib.pointer));
+            break;
+        case gl::ClientVertexArrayType::TextureCoord:
+            Capture(setupCalls,
+                    CaptureTexCoordPointer(*replayState, true, attrib.format->channelCount,
+                                           attrib.format->vertexAttribType, binding.getStride(),
+                                           attrib.pointer));
+            break;
+        default:
+            UNREACHABLE();
+    }
+}
+
 void CaptureVertexArrayData(std::vector<CallCapture> *setupCalls,
                             const gl::Context *context,
                             const gl::VertexArray *vertexArray,
@@ -1888,7 +1738,17 @@ void CaptureVertexArrayData(std::vector<CallCapture> *setupCalls,
 
         if (attrib.enabled != defaultAttrib.enabled)
         {
-            Capture(setupCalls, CaptureEnableVertexAttribArray(*replayState, false, attribIndex));
+            if (context->isGLES1())
+            {
+                Capture(setupCalls,
+                        CaptureEnableClientState(*replayState, false,
+                                                 gl::GLES1Renderer::VertexArrayType(attribIndex)));
+            }
+            else
+            {
+                Capture(setupCalls,
+                        CaptureEnableVertexAttribArray(*replayState, false, attribIndex));
+            }
         }
 
         if (attrib.format != defaultAttrib.format || attrib.pointer != defaultAttrib.pointer ||
@@ -1906,10 +1766,18 @@ void CaptureVertexArrayData(std::vector<CallCapture> *setupCalls,
             }
 
             // Establish the relationship between currently bound buffer and the VAO
-            Capture(setupCalls, CaptureVertexAttribPointer(
-                                    *replayState, true, attribIndex, attrib.format->channelCount,
-                                    attrib.format->vertexAttribType, attrib.format->isNorm(),
-                                    binding.getStride(), attrib.pointer));
+            if (context->isGLES1())
+            {
+                CaptureVertexPointerES1(setupCalls, replayState, attribIndex, attrib, binding);
+            }
+            else
+            {
+                Capture(setupCalls,
+                        CaptureVertexAttribPointer(
+                            *replayState, true, attribIndex, attrib.format->channelCount,
+                            attrib.format->vertexAttribType, attrib.format->isNorm(),
+                            binding.getStride(), attrib.pointer));
+            }
         }
 
         if (binding.getDivisor() != 0)
@@ -2192,6 +2060,24 @@ void CaptureIndexedBuffers(const gl::State &glState,
     }
 }
 
+void CaptureDefaultVertexAttribs(const gl::State &replayState,
+                                 const gl::State &apiState,
+                                 std::vector<CallCapture> *setupCalls)
+{
+    const std::vector<gl::VertexAttribCurrentValueData> &currentValues =
+        apiState.getVertexAttribCurrentValues();
+
+    for (GLuint attribIndex = 0; attribIndex < gl::MAX_VERTEX_ATTRIBS; ++attribIndex)
+    {
+        const gl::VertexAttribCurrentValueData &defaultValue = currentValues[attribIndex];
+        if (!IsDefaultCurrentValue(defaultValue))
+        {
+            Capture(setupCalls, CaptureVertexAttrib4fv(replayState, true, attribIndex,
+                                                       defaultValue.Values.FloatValues));
+        }
+    }
+}
+
 void CaptureMidExecutionSetup(const gl::Context *context,
                               std::vector<CallCapture> *setupCalls,
                               ResourceTracker *resourceTracker,
@@ -2298,18 +2184,10 @@ void CaptureMidExecutionSetup(const gl::Context *context,
     // Must happen after buffer data initialization.
     // TODO(http://anglebug.com/3662): Complete state capture.
 
-    // Capture default vertex attribs
-    const std::vector<gl::VertexAttribCurrentValueData> &currentValues =
-        apiState.getVertexAttribCurrentValues();
-
-    for (GLuint attribIndex = 0; attribIndex < gl::MAX_VERTEX_ATTRIBS; ++attribIndex)
+    // Capture default vertex attribs. Do not capture on GLES1.
+    if (!context->isGLES1())
     {
-        const gl::VertexAttribCurrentValueData &defaultValue = currentValues[attribIndex];
-        if (!IsDefaultCurrentValue(defaultValue))
-        {
-            Capture(setupCalls, CaptureVertexAttrib4fv(replayState, true, attribIndex,
-                                                       defaultValue.Values.FloatValues));
-        }
+        CaptureDefaultVertexAttribs(replayState, apiState, setupCalls);
     }
 
     // Capture vertex array objects
@@ -2861,6 +2739,7 @@ void CaptureMidExecutionSetup(const gl::Context *context,
         }
 
         resourceTracker->onShaderProgramAccess(id);
+        resourceTracker->getStartingPrograms().insert(id);
     }
 
     for (const auto &ppoIterator : *programPipelineManager)
@@ -2935,7 +2814,7 @@ void CaptureMidExecutionSetup(const gl::Context *context,
 
     // For now we assume the installed program executable is the same as the current program.
     // TODO(jmadill): Handle installed program executable. http://anglebug.com/3662
-    if (apiState.getProgram())
+    if (apiState.getProgram() && !context->isGLES1())
     {
         cap(CaptureUseProgram(replayState, true, apiState.getProgram()->id()));
         CaptureUpdateCurrentProgram(setupCalls->back(), setupCalls);
@@ -3155,6 +3034,17 @@ void CaptureMidExecutionSetup(const gl::Context *context,
         }
     };
 
+    // Capture GLES1 context states.
+    if (context->isGLES1())
+    {
+        const bool currentTextureState = apiState.getEnableFeature(GL_TEXTURE_2D);
+        const bool defaultTextureState = replayState.getEnableFeature(GL_TEXTURE_2D);
+        if (currentTextureState != defaultTextureState)
+        {
+            capCap(GL_TEXTURE_2D, currentTextureState);
+        }
+    }
+
     // Rasterizer state. Missing ES 3.x features.
     const gl::RasterizerState &defaultRasterState = replayState.getRasterizerState();
     const gl::RasterizerState &currentRasterState = apiState.getRasterizerState();
@@ -3220,50 +3110,97 @@ void CaptureMidExecutionSetup(const gl::Context *context,
         capCap(GL_STENCIL_TEST, currentDSState.stencilTest);
     }
 
-    if (defaultDSState.stencilFunc != currentDSState.stencilFunc ||
-        defaultDSState.stencilMask != currentDSState.stencilMask || apiState.getStencilRef() != 0)
+    if (currentDSState.stencilFunc == currentDSState.stencilBackFunc &&
+        currentDSState.stencilMask == currentDSState.stencilBackMask)
     {
-        cap(CaptureStencilFuncSeparate(replayState, true, GL_FRONT, currentDSState.stencilFunc,
-                                       apiState.getStencilRef(), currentDSState.stencilMask));
+        // Front and back are equal
+        if (defaultDSState.stencilFunc != currentDSState.stencilFunc ||
+            defaultDSState.stencilMask != currentDSState.stencilMask ||
+            apiState.getStencilRef() != 0)
+        {
+            cap(CaptureStencilFunc(replayState, true, currentDSState.stencilFunc,
+                                   apiState.getStencilRef(), currentDSState.stencilMask));
+        }
+    }
+    else
+    {
+        // Front and back are separate
+        if (defaultDSState.stencilFunc != currentDSState.stencilFunc ||
+            defaultDSState.stencilMask != currentDSState.stencilMask ||
+            apiState.getStencilRef() != 0)
+        {
+            cap(CaptureStencilFuncSeparate(replayState, true, GL_FRONT, currentDSState.stencilFunc,
+                                           apiState.getStencilRef(), currentDSState.stencilMask));
+        }
+
+        if (defaultDSState.stencilBackFunc != currentDSState.stencilBackFunc ||
+            defaultDSState.stencilBackMask != currentDSState.stencilBackMask ||
+            apiState.getStencilBackRef() != 0)
+        {
+            cap(CaptureStencilFuncSeparate(
+                replayState, true, GL_BACK, currentDSState.stencilBackFunc,
+                apiState.getStencilBackRef(), currentDSState.stencilBackMask));
+        }
     }
 
-    if (defaultDSState.stencilBackFunc != currentDSState.stencilBackFunc ||
-        defaultDSState.stencilBackMask != currentDSState.stencilBackMask ||
-        apiState.getStencilBackRef() != 0)
+    if (currentDSState.stencilFail == currentDSState.stencilBackFail &&
+        currentDSState.stencilPassDepthFail == currentDSState.stencilBackPassDepthFail &&
+        currentDSState.stencilPassDepthPass == currentDSState.stencilBackPassDepthPass)
     {
-        cap(CaptureStencilFuncSeparate(replayState, true, GL_BACK, currentDSState.stencilBackFunc,
-                                       apiState.getStencilBackRef(),
-                                       currentDSState.stencilBackMask));
+        // Front and back are equal
+        if (defaultDSState.stencilFail != currentDSState.stencilFail ||
+            defaultDSState.stencilPassDepthFail != currentDSState.stencilPassDepthFail ||
+            defaultDSState.stencilPassDepthPass != currentDSState.stencilPassDepthPass)
+        {
+            cap(CaptureStencilOp(replayState, true, currentDSState.stencilFail,
+                                 currentDSState.stencilPassDepthFail,
+                                 currentDSState.stencilPassDepthPass));
+        }
+    }
+    else
+    {
+        // Front and back are separate
+        if (defaultDSState.stencilFail != currentDSState.stencilFail ||
+            defaultDSState.stencilPassDepthFail != currentDSState.stencilPassDepthFail ||
+            defaultDSState.stencilPassDepthPass != currentDSState.stencilPassDepthPass)
+        {
+            cap(CaptureStencilOpSeparate(replayState, true, GL_FRONT, currentDSState.stencilFail,
+                                         currentDSState.stencilPassDepthFail,
+                                         currentDSState.stencilPassDepthPass));
+        }
+
+        if (defaultDSState.stencilBackFail != currentDSState.stencilBackFail ||
+            defaultDSState.stencilBackPassDepthFail != currentDSState.stencilBackPassDepthFail ||
+            defaultDSState.stencilBackPassDepthPass != currentDSState.stencilBackPassDepthPass)
+        {
+            cap(CaptureStencilOpSeparate(replayState, true, GL_BACK, currentDSState.stencilBackFail,
+                                         currentDSState.stencilBackPassDepthFail,
+                                         currentDSState.stencilBackPassDepthPass));
+        }
     }
 
-    if (defaultDSState.stencilFail != currentDSState.stencilFail ||
-        defaultDSState.stencilPassDepthFail != currentDSState.stencilPassDepthFail ||
-        defaultDSState.stencilPassDepthPass != currentDSState.stencilPassDepthPass)
+    if (currentDSState.stencilWritemask == currentDSState.stencilBackWritemask)
     {
-        cap(CaptureStencilOpSeparate(replayState, true, GL_FRONT, currentDSState.stencilFail,
-                                     currentDSState.stencilPassDepthFail,
-                                     currentDSState.stencilPassDepthPass));
+        // Front and back are equal
+        if (defaultDSState.stencilWritemask != currentDSState.stencilWritemask)
+        {
+            cap(CaptureStencilMask(replayState, true, currentDSState.stencilWritemask));
+        }
     }
-
-    if (defaultDSState.stencilBackFail != currentDSState.stencilBackFail ||
-        defaultDSState.stencilBackPassDepthFail != currentDSState.stencilBackPassDepthFail ||
-        defaultDSState.stencilBackPassDepthPass != currentDSState.stencilBackPassDepthPass)
+    else
     {
-        cap(CaptureStencilOpSeparate(replayState, true, GL_BACK, currentDSState.stencilBackFail,
-                                     currentDSState.stencilBackPassDepthFail,
-                                     currentDSState.stencilBackPassDepthPass));
-    }
+        // Front and back are separate
+        if (defaultDSState.stencilWritemask != currentDSState.stencilWritemask)
+        {
+            cap(CaptureStencilMaskSeparate(replayState, true, GL_FRONT,
+                                           currentDSState.stencilWritemask));
+        }
 
-    if (defaultDSState.stencilWritemask != currentDSState.stencilWritemask)
-    {
-        cap(CaptureStencilMaskSeparate(replayState, true, GL_FRONT,
-                                       currentDSState.stencilWritemask));
-    }
-
-    if (defaultDSState.stencilBackWritemask != currentDSState.stencilBackWritemask)
-    {
-        cap(CaptureStencilMaskSeparate(replayState, true, GL_BACK,
-                                       currentDSState.stencilBackWritemask));
+        if (defaultDSState.stencilBackWritemask != currentDSState.stencilBackWritemask)
+        {
+            cap(CaptureStencilMaskSeparate(replayState, true, GL_BACK,
+                                           currentDSState.stencilBackWritemask));
+        }
     }
 
     // Blend state.
@@ -3280,9 +3217,20 @@ void CaptureMidExecutionSetup(const gl::Context *context,
         currentBlendState.sourceBlendAlpha != defaultBlendState.sourceBlendAlpha ||
         currentBlendState.destBlendAlpha != defaultBlendState.destBlendAlpha)
     {
-        cap(CaptureBlendFuncSeparate(
-            replayState, true, currentBlendState.sourceBlendRGB, currentBlendState.destBlendRGB,
-            currentBlendState.sourceBlendAlpha, currentBlendState.destBlendAlpha));
+        if (currentBlendState.sourceBlendRGB == currentBlendState.sourceBlendAlpha &&
+            currentBlendState.destBlendRGB == currentBlendState.destBlendAlpha)
+        {
+            // Color and alpha are equal
+            cap(CaptureBlendFunc(replayState, true, currentBlendState.sourceBlendRGB,
+                                 currentBlendState.destBlendRGB));
+        }
+        else
+        {
+            // Color and alpha are separate
+            cap(CaptureBlendFuncSeparate(
+                replayState, true, currentBlendState.sourceBlendRGB, currentBlendState.destBlendRGB,
+                currentBlendState.sourceBlendAlpha, currentBlendState.destBlendAlpha));
+        }
     }
 
     if (currentBlendState.blendEquationRGB != defaultBlendState.blendEquationRGB ||
@@ -3452,6 +3400,13 @@ bool SkipCall(EntryPoint entryPoint)
             // - EXT_debug_label
             // - EXT_debug_marker
             // There is no need to capture these for replaying a trace in our harness
+            return true;
+
+        case EntryPoint::GLGetActiveUniform:
+            // Skip this call because:
+            // - We don't use the return values from this call.
+            // - Active uniform counts can vary between platforms due to cross stage optimizations
+            //   and asking about uniforms above GL_ACTIVE_UNIFORMS triggers errors.
             return true;
 
         default:
@@ -4068,7 +4023,29 @@ void FrameCapture::maybeCapturePreCallUpdates(const gl::Context *context, CallCa
             }
             else
             {
-                index = call.params.getClientArrayPointerParameter().arrayClientPointerIndex;
+                gl::ClientVertexArrayType type;
+                switch (call.entryPoint)
+                {
+                    case EntryPoint::GLVertexPointer:
+                        type = gl::ClientVertexArrayType::Vertex;
+                        break;
+                    case EntryPoint::GLColorPointer:
+                        type = gl::ClientVertexArrayType::Color;
+                        break;
+                    case EntryPoint::GLTexCoordPointer:
+                        type = gl::ClientVertexArrayType::TextureCoord;
+                        break;
+                    case EntryPoint::GLNormalPointer:
+                        type = gl::ClientVertexArrayType::Normal;
+                        break;
+                    case EntryPoint::GLPointSizePointerOES:
+                        type = gl::ClientVertexArrayType::PointSize;
+                        break;
+                    default:
+                        UNREACHABLE();
+                        type = gl::ClientVertexArrayType::InvalidEnum;
+                }
+                index = gl::GLES1Renderer::VertexArrayIndex(type, context->getState().gles1());
             }
 
             if (call.params.hasClientArrayData())
@@ -4185,6 +4162,35 @@ void FrameCapture::maybeCapturePreCallUpdates(const gl::Context *context, CallCa
                 context->getShareGroup()->getFrameCaptureShared();
             frameCaptureShared->setShaderSource(shader->getHandle(), shader->getSourceString());
             frameCaptureShared->setProgramSources(programID, GetAttachedProgramSources(program));
+
+            if (isCaptureActive())
+            {
+                mResourceTracker.setCreatedProgram(programID);
+            }
+            break;
+        }
+
+        case EntryPoint::GLCreateProgram:
+        {
+            // If we're capturing, track which programs have been created
+            if (isCaptureActive())
+            {
+                gl::ShaderProgramID programID = {call.params.getReturnValue().value.GLuintVal};
+                mResourceTracker.setCreatedProgram(programID);
+            }
+            break;
+        }
+
+        case EntryPoint::GLDeleteProgram:
+        {
+            // If we're capturing, track which programs have been deleted
+            if (isCaptureActive())
+            {
+                const ParamCapture &param =
+                    call.params.getParam("programPacked", ParamType::TShaderProgramID, 0);
+
+                mResourceTracker.setDeletedProgram(param.value.ShaderProgramIDVal);
+            }
             break;
         }
 
@@ -4583,7 +4589,7 @@ void FrameCapture::onEndFrame(const gl::Context *context)
     }
 
     // Note that we currently capture before the start frame to collect shader and program sources.
-    if (!mFrameCalls.empty() && isCaptureActive())
+    if (isCaptureActive())
     {
         if (mIsFirstFrame)
         {
@@ -4596,9 +4602,7 @@ void FrameCapture::onEndFrame(const gl::Context *context)
         if (mFrameIndex == mCaptureEndFrame)
         {
             // Save the index files after the last frame.
-            WriteCppReplayIndexFiles(mCompression, mOutDirectory, context, mCaptureLabel,
-                                     getFrameCount(), mDrawSurfaceDimensions, mHasResourceType,
-                                     mSerializeStateEnabled, false, mBinaryData);
+            writeCppReplayIndexFiles(context, false);
             if (!mBinaryData.empty())
             {
                 SaveBinaryData(mCompression, mOutDirectory, context->id(), mCaptureLabel,
@@ -4646,9 +4650,7 @@ void FrameCapture::onDestroyContext(const gl::Context *context)
         // It doesnt make sense to write the index files when no frame has been recorded
         mFrameIndex -= 1;
         mCaptureEndFrame = mFrameIndex;
-        WriteCppReplayIndexFiles(mCompression, mOutDirectory, context, mCaptureLabel,
-                                 getFrameCount(), mDrawSurfaceDimensions, mHasResourceType,
-                                 mSerializeStateEnabled, true, mBinaryData);
+        writeCppReplayIndexFiles(context, true);
         if (!mBinaryData.empty())
         {
             SaveBinaryData(mCompression, mOutDirectory, context->id(), mCaptureLabel, mBinaryData);
@@ -4725,13 +4727,16 @@ void ResourceTracker::setDeletedBuffer(gl::BufferID id)
         return;
     }
 
-    // Ensure this buffer was in our starting set
-    // It's possible this could fire if the app deletes buffers that were never generated
-    ASSERT(mStartingBuffers.empty() || (mStartingBuffers.find(id) != mStartingBuffers.end()));
+    if (mStartingBuffers.find(id) != mStartingBuffers.end())
+    {
+        // The app is deleting a buffer we started with, we need to regen on loop
+        mBuffersToRegen.insert(id);
+        mBuffersToRestore.insert(id);
+    }
 
-    // In this case, the app is deleting a buffer we started with, we need to regen on loop
-    mBuffersToRegen.insert(id);
-    mBuffersToRestore.insert(id);
+    // If none of the above is true, the app is deleting a buffer that was never genned.
+    // This is allowed by the spec for DeleteBuffers:
+    //    Unused names in buffers are silently ignored, as is the value zero.
 }
 
 void ResourceTracker::setDeletedFenceSync(GLsync sync)
@@ -4745,6 +4750,40 @@ void ResourceTracker::setDeletedFenceSync(GLsync sync)
 
     // In this case, the app is deleting a fence sync we started with, we need to regen on loop.
     mFenceSyncsToRegen.insert(sync);
+}
+
+void ResourceTracker::setCreatedProgram(gl::ShaderProgramID id)
+{
+    if (mStartingPrograms.find(id) == mStartingPrograms.end())
+    {
+        // This is a program created after MEC was initialized, track it
+        mNewPrograms.insert(id);
+        return;
+    }
+}
+
+void ResourceTracker::setDeletedProgram(gl::ShaderProgramID id)
+{
+    if (id.value == 0)
+    {
+        // Ignore program ID 0
+        return;
+    }
+
+    if (mNewPrograms.find(id) != mNewPrograms.end())
+    {
+        // This is a program created after MEC was initialized, just clear it, since there will be
+        // no actions required for it to return to starting state.
+        mNewPrograms.erase(id);
+        return;
+    }
+
+    // Ensure this program was in our starting set
+    // It's possible this could fire if the app deletes programs that were never generated
+    ASSERT(mStartingPrograms.empty() || (mStartingPrograms.find(id) != mStartingPrograms.end()));
+
+    // In this case, the app is deleting a program we started with, we need to regen on loop
+    mProgramsToRegen.insert(id);
 }
 
 void ResourceTracker::setGennedBuffer(gl::BufferID id)
@@ -4841,6 +4880,208 @@ void FrameCapture::replay(gl::Context *context)
         }
 
         ReplayCall(context, &replayContext, call);
+    }
+}
+
+void FrameCapture::writeCppReplayIndexFiles(const gl::Context *context, bool writeResetContextCall)
+{
+    const gl::ContextID contextId       = context->id();
+    const egl::Config *config           = context->getConfig();
+    const egl::AttributeMap &attributes = context->getDisplay()->getAttributeMap();
+
+    DataTracker dataTracker;
+
+    unsigned frameCount = getFrameCount();
+
+    std::stringstream header;
+    std::stringstream source;
+
+    header << "#pragma once\n";
+    header << "\n";
+    header << "#include <EGL/egl.h>\n";
+    header << "#include <cstdint>\n";
+    header << "\n";
+
+    if (!mCaptureLabel.empty())
+    {
+        header << "namespace " << mCaptureLabel << "\n";
+        header << "{\n";
+    }
+    header << "// Begin Trace Metadata\n";
+    header << "#define ANGLE_REPLAY_VERSION";
+    if (!mCaptureLabel.empty())
+    {
+        std::string captureLabelUpper = mCaptureLabel;
+        angle::ToUpper(&captureLabelUpper);
+        header << "_" << captureLabelUpper;
+    }
+    header << " " << ANGLE_REVISION << "\n";
+    header << "constexpr uint32_t kReplayContextClientMajorVersion = "
+           << context->getClientMajorVersion() << ";\n";
+    header << "constexpr uint32_t kReplayContextClientMinorVersion = "
+           << context->getClientMinorVersion() << ";\n";
+    header << "constexpr EGLint kReplayPlatformType = "
+           << attributes.getAsInt(EGL_PLATFORM_ANGLE_TYPE_ANGLE) << ";\n";
+    header << "constexpr EGLint kReplayDeviceType = "
+           << attributes.getAsInt(EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE) << ";\n";
+    header << "constexpr uint32_t kReplayFrameStart = 1;\n";
+    header << "constexpr uint32_t kReplayFrameEnd = " << frameCount << ";\n";
+    header << "constexpr EGLint kReplayDrawSurfaceWidth = "
+           << mDrawSurfaceDimensions.at(contextId).width << ";\n";
+    header << "constexpr EGLint kReplayDrawSurfaceHeight = "
+           << mDrawSurfaceDimensions.at(contextId).height << ";\n";
+    header << "constexpr EGLint kDefaultFramebufferRedBits = "
+           << (config ? std::to_string(config->redSize) : "EGL_DONT_CARE") << ";\n";
+    header << "constexpr EGLint kDefaultFramebufferGreenBits = "
+           << (config ? std::to_string(config->greenSize) : "EGL_DONT_CARE") << ";\n";
+    header << "constexpr EGLint kDefaultFramebufferBlueBits = "
+           << (config ? std::to_string(config->blueSize) : "EGL_DONT_CARE") << ";\n";
+    header << "constexpr EGLint kDefaultFramebufferAlphaBits = "
+           << (config ? std::to_string(config->alphaSize) : "EGL_DONT_CARE") << ";\n";
+    header << "constexpr EGLint kDefaultFramebufferDepthBits = "
+           << (config ? std::to_string(config->depthSize) : "EGL_DONT_CARE") << ";\n";
+    header << "constexpr EGLint kDefaultFramebufferStencilBits = "
+           << (config ? std::to_string(config->stencilSize) : "EGL_DONT_CARE") << ";\n";
+    header << "constexpr bool kIsBinaryDataCompressed = " << (mCompression ? "true" : "false")
+           << ";\n";
+    header << "constexpr bool kAreClientArraysEnabled = "
+           << (context->getState().areClientArraysEnabled() ? "true" : "false") << ";\n";
+    header << "constexpr bool kbindGeneratesResources = "
+           << (context->getState().isBindGeneratesResourceEnabled() ? "true" : "false") << ";\n";
+    header << "constexpr bool kWebGLCompatibility = "
+           << (context->getState().getExtensions().webglCompatibility ? "true" : "false") << ";\n";
+    header << "constexpr bool kRobustResourceInit = "
+           << (context->getState().isRobustResourceInitEnabled() ? "true" : "false") << ";\n";
+
+    header << "// End Trace Metadata\n";
+    header << "\n";
+    for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
+    {
+        header << "void " << FmtReplayFunction(contextId, frameIndex) << ";\n";
+    }
+    header << "\n";
+    if (mSerializeStateEnabled)
+    {
+        for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
+        {
+            header << "const char *" << FmtGetSerializedContextStateFunction(contextId, frameIndex)
+                   << ";\n";
+        }
+        header << "\n";
+    }
+
+    source << "#include \"" << FmtCapturePrefix(contextId, mCaptureLabel) << ".h\"\n";
+    source << "#include \"trace_fixture.h\"\n";
+    source << "\n";
+
+    if (!mCaptureLabel.empty())
+    {
+        source << "using namespace " << mCaptureLabel << ";\n";
+        source << "\n";
+    }
+
+    {
+        std::stringstream setupCallStream;
+
+        setupCallStream << "void " << FmtSetupFunction(kNoPartId) << "\n";
+        setupCallStream << "{\n";
+
+        WriteInitReplayCall(mCompression, setupCallStream, context->id(), mCaptureLabel,
+                            MaxClientArraySize(mClientArraySizes), mReadBufferSize);
+
+        WriteCppReplayFunctionWithParts(context, ReplayFunc::Setup, &dataTracker, mFrameIndex,
+                                        &mBinaryData, mSetupCalls, header, setupCallStream, source);
+
+        source << setupCallStream.str();
+        source << "}\n";
+    }
+
+    source << "extern \"C\" {\n";
+    source << "void ReplayFrame(uint32_t frameIndex)\n";
+    source << "{\n";
+    source << "    switch (frameIndex)\n";
+    source << "    {\n";
+    for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
+    {
+        source << "        case " << frameIndex << ":\n";
+        source << "            " << FmtReplayFunction(contextId, frameIndex) << ";\n";
+        source << "            break;\n";
+    }
+    source << "        default:\n";
+    source << "            break;\n";
+    source << "    }\n";
+    source << "}\n";
+    source << "\n";
+
+    if (writeResetContextCall)
+    {
+        source << "void ResetReplay()\n";
+        source << "{\n";
+        source << "    // Reset context is empty because context is destroyed before end "
+                  "frame is reached\n";
+        source << "}\n";
+        source << "\n";
+    }
+
+    if (mSerializeStateEnabled)
+    {
+        source << "const char *GetSerializedContextState(uint32_t frameIndex)\n";
+        source << "{\n";
+        source << "    switch (frameIndex)\n";
+        source << "    {\n";
+        for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
+        {
+            source << "        case " << frameIndex << ":\n";
+            source << "            return "
+                   << FmtGetSerializedContextStateFunction(contextId, frameIndex) << ";\n";
+        }
+        source << "        default:\n";
+        source << "            return \"\";\n";
+        source << "    }\n";
+        source << "}\n";
+        source << "\n";
+    }
+
+    source << "}  // extern \"C\"\n";
+
+    if (!mCaptureLabel.empty())
+    {
+        header << "} // namespace " << mCaptureLabel << "\n";
+    }
+
+    {
+        std::string headerContents = header.str();
+
+        std::stringstream headerPathStream;
+        headerPathStream << mOutDirectory << FmtCapturePrefix(contextId, mCaptureLabel) << ".h";
+        std::string headerPath = headerPathStream.str();
+
+        SaveFileHelper saveHeader(headerPath);
+        saveHeader << headerContents;
+    }
+
+    {
+        std::string sourceContents = source.str();
+
+        std::stringstream sourcePathStream;
+        sourcePathStream << mOutDirectory << FmtCapturePrefix(contextId, mCaptureLabel) << ".cpp";
+        std::string sourcePath = sourcePathStream.str();
+
+        SaveFileHelper saveSource(sourcePath);
+        saveSource << sourceContents;
+    }
+
+    {
+        std::stringstream indexPathStream;
+        indexPathStream << mOutDirectory << FmtCapturePrefix(contextId, mCaptureLabel)
+                        << "_files.txt";
+        std::string indexPath = indexPathStream.str();
+
+        SaveFileHelper saveIndex(indexPath);
+        for (uint32_t frameIndex = 1; frameIndex <= frameCount; ++frameIndex)
+        {
+            saveIndex << GetCaptureFileName(contextId, mCaptureLabel, frameIndex, ".cpp") << "\n";
+        }
     }
 }
 
@@ -5062,8 +5303,11 @@ void CaptureVertexPointerGLES1(const gl::State &glState,
                                ParamCapture *paramCapture)
 {
     paramCapture->value.voidConstPointerVal = pointer;
-    paramCapture->arrayClientPointerIndex =
-        gl::GLES1Renderer::VertexArrayIndex(type, glState.gles1());
+    if (!glState.getTargetBuffer(gl::BufferBinding::Array))
+    {
+        paramCapture->arrayClientPointerIndex =
+            gl::GLES1Renderer::VertexArrayIndex(type, glState.gles1());
+    }
 }
 
 gl::Program *GetProgramForCapture(const gl::State &glState, gl::ShaderProgramID handle)

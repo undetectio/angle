@@ -10,14 +10,34 @@
 
 #include "libANGLE/renderer/CLtypes.h"
 
+#include "libANGLE/Debug.h"
+
 namespace cl
 {
 
 class Object
 {
   public:
-    constexpr Object() {}
-    ~Object() = default;
+    Object() = default;
+    virtual ~Object();
+
+    cl_uint getRefCount() { return mRefCount; }
+    const cl_uint *getRefCountPtr() const { return &mRefCount; }
+
+  protected:
+    void addRef() noexcept { ++mRefCount; }
+    bool removeRef()
+    {
+        if (mRefCount == 0u)
+        {
+            WARN() << "Unreferenced object without references";
+            return true;
+        }
+        return --mRefCount == 0u;
+    }
+
+  private:
+    cl_uint mRefCount = 1u;
 };
 
 }  // namespace cl

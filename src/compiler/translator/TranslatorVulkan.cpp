@@ -17,9 +17,11 @@
 #include "compiler/translator/BuiltinsWorkaroundGLSL.h"
 #include "compiler/translator/ImmutableStringBuilder.h"
 #include "compiler/translator/IntermNode.h"
+#include "compiler/translator/OutputSPIRV.h"
 #include "compiler/translator/OutputVulkanGLSL.h"
 #include "compiler/translator/StaticType.h"
 #include "compiler/translator/glslang_wrapper.h"
+#include "compiler/translator/tree_ops/vulkan/DeclarePerVertexBlocks.h"
 #include "compiler/translator/tree_ops/vulkan/FlagSamplersWithTexelFetch.h"
 #include "compiler/translator/tree_ops/vulkan/MonomorphizeUnsupportedFunctionsInVulkanGLSL.h"
 #include "compiler/translator/tree_ops/vulkan/RemoveAtomicCounterBuiltins.h"
@@ -648,7 +650,6 @@ ANGLE_NO_DISCARD bool InsertFragCoordCorrection(TCompiler *compiler,
 
 ANGLE_NO_DISCARD bool AddBresenhamEmulationFS(TCompiler *compiler,
                                               ShCompileOptions compileOptions,
-                                              TInfoSinkBase &sink,
                                               TIntermBlock *root,
                                               TSymbolTable *symbolTable,
                                               SpecConst *specConst,
@@ -814,8 +815,8 @@ bool TranslatorVulkan::translateImpl(TInfoSinkBase &sink,
     // inactive samplers is not yet supported.  Note also that currently, CollectVariables marks
     // every field of an active uniform that's of struct type as active, i.e. no extracted sampler
     // is inactive.
-    if (!RemoveInactiveInterfaceVariables(this, root, getAttributes(), getInputVaryings(),
-                                          getOutputVariables(), getUniforms(),
+    if (!RemoveInactiveInterfaceVariables(this, root, &getSymbolTable(), getAttributes(),
+                                          getInputVaryings(), getOutputVariables(), getUniforms(),
                                           getInterfaceBlocks()))
     {
         return false;
@@ -1039,7 +1040,7 @@ bool TranslatorVulkan::translateImpl(TInfoSinkBase &sink,
 
             if ((compileOptions & SH_ADD_BRESENHAM_LINE_RASTER_EMULATION) != 0)
             {
-                if (!AddBresenhamEmulationFS(this, compileOptions, sink, root, &getSymbolTable(),
+                if (!AddBresenhamEmulationFS(this, compileOptions, root, &getSymbolTable(),
                                              specConst, driverUniforms, usesFragCoord))
                 {
                     return false;
@@ -1337,6 +1338,20 @@ bool TranslatorVulkan::translate(TIntermBlock *root,
             return false;
         }
     }
+
+#if defined(ANGLE_ENABLE_DIRECT_SPIRV_GENERATION)
+    if ((compileOptions & SH_GENERATE_SPIRV_DIRECTLY) != 0 && getShaderType() == GL_VERTEX_SHADER)
+    {
+        // Declare the implicitly defined gl_PerVertex I/O blocks if not already.  This will help
+        // SPIR-V generation treat them mostly like usual I/O blocks.
+        if (!DeclarePerVertexBlocks(this, root, &getSymbolTable()))
+        {
+            return false;
+        }
+
+        return OutputSPIRV(this, root, compileOptions);
+    }
+#endif
 
     // Write translated shader.
     TOutputVulkanGLSL outputGLSL(sink, getArrayIndexClampingStrategy(), getHashFunction(),

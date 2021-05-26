@@ -791,6 +791,8 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     void invalidateGraphicsDriverUniforms();
     void invalidateDriverUniforms();
 
+    angle::Result handleNoopDrawEvent() override;
+
     // Handlers for graphics pipeline dirty bits.
     angle::Result handleDirtyGraphicsMemoryBarrier(DirtyBits::Iterator *dirtyBitsIterator,
                                                    DirtyBits dirtyBitMask);
@@ -994,6 +996,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     // The offset we had the last time we bound the index buffer.
     const GLvoid *mLastIndexBufferOffset;
+    VkDeviceSize mCurrentIndexBufferOffset;
     gl::DrawElementsType mCurrentDrawElementsType;
     angle::PackedEnumMap<gl::DrawElementsType, VkIndexType> mIndexTypeMap;
 

@@ -2997,6 +2997,15 @@ TIntermDeclaration *TParseContext::parseSingleInitDeclaration(const TPublicType 
         {
             declaration->appendDeclarator(initNode);
         }
+        else if (publicType.isStructSpecifier())
+        {
+            // The initialization got constant folded.  If it's a struct, declare the struct anyway.
+            TVariable *emptyVariable =
+                new TVariable(&symbolTable, kEmptyImmutableString, type, SymbolType::Empty);
+            TIntermSymbol *symbol = new TIntermSymbol(emptyVariable);
+            symbol->setLine(publicType.getLine());
+            declaration->appendDeclarator(symbol);
+        }
     }
     return declaration;
 }
@@ -4421,8 +4430,13 @@ TIntermDeclaration *TParseContext::addInterfaceBlock(
             case EvqFlat:
             case EvqNoPerspective:
             case EvqCentroid:
+            case EvqGeometryIn:
+            case EvqGeometryOut:
                 if (!IsShaderIoBlock(typeQualifier.qualifier) &&
-                    typeQualifier.qualifier != EvqPatchIn && typeQualifier.qualifier != EvqPatchOut)
+                    typeQualifier.qualifier != EvqPatchIn &&
+                    typeQualifier.qualifier != EvqPatchOut &&
+                    typeQualifier.qualifier != EvqGeometryIn &&
+                    typeQualifier.qualifier != EvqGeometryOut)
                 {
                     error(field->line(), "invalid qualifier on interface block member",
                           getQualifierString(qualifier));

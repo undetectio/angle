@@ -3007,6 +3007,212 @@ TEST_P(Texture2DTest, NPOTSubImageParameters)
     EXPECT_GL_NO_ERROR();
 }
 
+void FillLevel(GLint level,
+               GLuint width,
+               GLuint height,
+               const GLColor &color,
+               bool opt_cubemap,
+               bool opt_subTex)
+{
+    GLsizei numPixels = width * height;
+    std::unique_ptr<uint8_t[]> pixels;
+    GLsizei largeDim = std::max(width, height);
+    GLsizei smallDim = std::min(width, height);
+
+    std::unique_ptr<uint8_t[]> pixelRow = std::make_unique<uint8_t[]>(largeDim * 4);
+    for (GLint jj = 0; jj < largeDim; ++jj)
+    {
+        GLsizei off       = jj * 4;
+        pixelRow[off + 0] = color[0];
+        pixelRow[off + 1] = color[1];
+        pixelRow[off + 2] = color[2];
+        pixelRow[off + 3] = color[3];
+    }
+
+    if (largeDim == numPixels)
+    {
+        pixels = std::move(pixelRow);
+    }
+    else
+    {
+        pixels = std::make_unique<uint8_t[]>(numPixels * 4);
+        for (GLint jj = 0; jj < smallDim; ++jj)
+        {
+            GLsizei off = jj * largeDim * 4;
+            memcpy(pixels.get() + off, pixelRow.get(), largeDim * 4);
+        }
+    }
+
+    if (opt_cubemap)
+    {
+        std::array<GLenum, 6> targets = {
+            GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+            GL_TEXTURE_CUBE_MAP_POSITIVE_Y, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+            GL_TEXTURE_CUBE_MAP_POSITIVE_Z, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z};
+        for (GLenum target : targets)
+        {
+            if (opt_subTex)
+            {
+                glTexSubImage2D(target, level, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE,
+                                pixels.get());
+            }
+            else
+            {
+                glTexImage2D(target, level, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                             pixels.get());
+            }
+        }
+    }
+    else
+    {
+        if (opt_subTex)
+        {
+            glTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE,
+                            pixels.get());
+        }
+        else
+        {
+            glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                         pixels.get());
+        }
+    }
+}
+
+// This is part of tests that webgl_conformance_vulkan_passthrough_tests
+// conformance/textures/misc/texture-size.html does
+TEST_P(Texture2DTest, TextureSize)
+{
+    // http://anglebug.com/5982
+    ANGLE_SKIP_TEST_IF(IsLinux() && IsTSan() && (IsOpenGL() || IsVulkan()));
+
+    const GLColor kNewMipColors[] = {
+        GLColor::green,  GLColor::red,     GLColor::blue,
+        GLColor::yellow, GLColor::magenta, GLColor::cyan,
+    };
+    GLuint colorCount = 0;
+
+    setUpProgram();
+
+    constexpr char kVS[] =
+        R"(precision highp float;
+attribute vec4 position;
+varying vec3 texcoord;
+void main()
+{
+    gl_Position = position;
+    texcoord = (position.xyz * 0.5) + 0.5;
+}
+)";
+    constexpr char kFS[] =
+        R"(precision mediump float;
+uniform samplerCube tex;
+varying vec3 texcoord;
+void main()
+{
+    gl_FragColor = textureCube(tex, texcoord);
+})";
+    GLuint programCubeMap = CompileProgram(kVS, kFS);
+    ASSERT_NE(0u, programCubeMap);
+    ASSERT_GL_NO_ERROR();
+
+    GLint max2DSize, maxCubeMapSize;
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_MAX_TEXTURE_SIZE, &max2DSize);
+    glGetTexParameteriv(GL_TEXTURE_CUBE_MAP, GL_MAX_CUBE_MAP_TEXTURE_SIZE, &maxCubeMapSize);
+    // Assuming 2048x2048xRGBA (22meg with mips) will run on all WebGL platforms
+    GLint max2DSquareSize = std::min(max2DSize, 2048);
+    // I'd prefer this to be 2048 but that's 16meg x 6 faces or 128meg (with mips)
+    // 1024 is 33.5 meg (with mips)
+    maxCubeMapSize = std::min(maxCubeMapSize, 1024);
+
+    GLint power = 0;
+    GLint size  = std::pow(2, power);
+    GLint texWidth, texHeight;
+
+    while (size <= max2DSize)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            bool cubeMap     = i == 3 ? true : false;
+            GLenum texTarget = cubeMap ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
+
+            switch (i)
+            {
+                case 0:
+                    texWidth  = size;
+                    texHeight = 1;
+                    break;
+                case 1:
+                    texWidth  = 1;
+                    texHeight = size;
+                    break;
+                case 2:
+                case 3:
+                    texWidth  = size;
+                    texHeight = size;
+                    break;
+            }
+
+            if (texWidth == texHeight && size > max2DSquareSize)
+            {
+                continue;
+            }
+
+            if (cubeMap && size > maxCubeMapSize)
+            {
+                continue;
+            }
+
+            GLuint texture;
+            glGenTextures(1, &texture);
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(texTarget, texture);
+            glTexParameteri(texTarget, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(texTarget, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(texTarget, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            FillLevel(0, texWidth, texHeight, kNewMipColors[colorCount], cubeMap, false);
+
+            if (cubeMap)
+            {
+                glUseProgram(programCubeMap);
+            }
+            else
+            {
+                glUseProgram(mProgram);
+            }
+            glUniform1i(mTexture2DUniformLocation, 0);
+
+            glClear(GL_COLOR_BUFFER_BIT);
+            drawQuad(mProgram, "position", 1.0f);
+            EXPECT_PIXEL_COLOR_EQ(0, 0, kNewMipColors[colorCount]);
+
+            colorCount = (colorCount + 1) % sizeof(kNewMipColors);
+            FillLevel(0, texWidth, texHeight, kNewMipColors[colorCount], cubeMap, false);
+            glGenerateMipmap(texTarget);
+            EXPECT_GL_NO_ERROR();
+
+            glTexParameteri(texTarget, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+            glClear(GL_COLOR_BUFFER_BIT);
+            drawQuad(mProgram, "position", 1.0f);
+            EXPECT_PIXEL_COLOR_EQ(0, 0, kNewMipColors[colorCount]);
+
+            colorCount = (colorCount + 1) % sizeof(kNewMipColors);
+            FillLevel(0, texWidth, texHeight, kNewMipColors[colorCount], cubeMap, true);
+            glGenerateMipmap(texTarget);
+
+            glClear(GL_COLOR_BUFFER_BIT);
+            drawQuad(mProgram, "position", 1.0f);
+            EXPECT_PIXEL_COLOR_EQ(0, 0, kNewMipColors[colorCount]);
+            EXPECT_GL_NO_ERROR();
+
+            glDeleteTextures(1, &texture);
+        }
+
+        ++power;
+        size = std::pow(2, power);
+    }
+}
+
 // Test that drawing works correctly RGBA 3D texture
 TEST_P(Texture3DTestES2, RGBA)
 {
@@ -3752,7 +3958,7 @@ TEST_P(Texture2DBaseMaxTestES3, GenerateMipmapAfterRedefineAndRebase)
     {
         setLodUniform(lod);
         drawQuad(mProgram, essl3_shaders::PositionAttrib(), 0.5f);
-        EXPECT_PIXEL_COLOR_EQ(0, 0, kMipColors[lod]);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, kMipColors[lod]) << lod;
     }
 
     // Redefine level 2 to an incompatible size, say the same size as level 0.
@@ -3775,10 +3981,10 @@ TEST_P(Texture2DBaseMaxTestES3, GenerateMipmapAfterRedefineAndRebase)
     {
         setLodUniform(lod);
         drawQuad(mProgram, essl3_shaders::PositionAttrib(), 0.5f);
-        EXPECT_PIXEL_COLOR_EQ(0, 0, kMipColors[1]);
-        EXPECT_PIXEL_COLOR_EQ(w, 0, kMipColors[1]);
-        EXPECT_PIXEL_COLOR_EQ(0, h, kMipColors[1]);
-        EXPECT_PIXEL_COLOR_EQ(w, h, kMipColors[1]);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, kMipColors[1]) << lod;
+        EXPECT_PIXEL_COLOR_EQ(w, 0, kMipColors[1]) << lod;
+        EXPECT_PIXEL_COLOR_EQ(0, h, kMipColors[1]) << lod;
+        EXPECT_PIXEL_COLOR_EQ(w, h, kMipColors[1]) << lod;
     }
 
     // Redefine level 1 (current base level) to an incompatible size.
@@ -3795,10 +4001,10 @@ TEST_P(Texture2DBaseMaxTestES3, GenerateMipmapAfterRedefineAndRebase)
     {
         setLodUniform(lod);
         drawQuad(mProgram, essl3_shaders::PositionAttrib(), 0.5f);
-        EXPECT_PIXEL_COLOR_EQ(0, 0, kMipColors[0]);
-        EXPECT_PIXEL_COLOR_EQ(w, 0, kMipColors[0]);
-        EXPECT_PIXEL_COLOR_EQ(0, h, kMipColors[0]);
-        EXPECT_PIXEL_COLOR_EQ(w, h, kMipColors[0]);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, kMipColors[0]) << lod;
+        EXPECT_PIXEL_COLOR_EQ(w, 0, kMipColors[0]) << lod;
+        EXPECT_PIXEL_COLOR_EQ(0, h, kMipColors[0]) << lod;
+        EXPECT_PIXEL_COLOR_EQ(w, h, kMipColors[0]) << lod;
     }
 }
 
@@ -4032,6 +4238,137 @@ TEST_P(Texture2DBaseMaxTestES3, RedefineIncompatibleLevelBeyondMaxLevel)
             EXPECT_PIXEL_COLOR_EQ(w, 0, kMipColors[lod]);
             EXPECT_PIXEL_COLOR_EQ(0, h, kMipColors[lod]);
             EXPECT_PIXEL_COLOR_EQ(w, h, kMipColors[lod]);
+        }
+    }
+}
+
+// Port test from web_gl/conformance2/textures/misc/fuzz-545-immutable-tex-render-feedback.html.
+// What this try to do is create a renderer feedback loop and ensure it is not crashing.
+TEST_P(Texture2DBaseMaxTestES3, Fuzz545ImmutableTexRenderFeedback)
+{
+    // http://crbug.com/1212206
+    ANGLE_SKIP_TEST_IF(IsMetal());
+
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Texture2D(), essl1_shaders::fs::Texture2D());
+
+    constexpr uint32_t MIPS = 3;
+    constexpr uint32_t SIZE = 10;
+
+    GLTexture immutTex;
+    glBindTexture(GL_TEXTURE_2D, immutTex);
+    glTexStorage2D(GL_TEXTURE_2D, MIPS, GL_RGBA8, SIZE, SIZE);
+
+    GLTexture mutTex;
+    glBindTexture(GL_TEXTURE_2D, mutTex);
+    for (uint32_t mip = 0; mip < MIPS; mip++)
+    {
+        const uint32_t size = SIZE >> mip;
+        glTexImage2D(GL_TEXTURE_2D, mip, GL_RGBA8, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+    }
+
+    constexpr GLenum MAG_FILTERS[] = {GL_LINEAR, GL_NEAREST};
+    constexpr GLenum MIN_FILTERS[] = {
+        GL_LINEAR,  GL_LINEAR_MIPMAP_LINEAR,  GL_LINEAR_MIPMAP_NEAREST,
+        GL_NEAREST, GL_NEAREST_MIPMAP_LINEAR, GL_NEAREST_MIPMAP_NEAREST};
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+    const GLuint texs[] = {immutTex, mutTex};
+    for (const GLuint tex : texs)
+    {
+        glBindTexture(GL_TEXTURE_2D, tex);
+
+        for (GLuint level_prime_base = 0; level_prime_base < (MIPS + 1); level_prime_base++)
+        {  // `level_base` in GLES
+            // ES 3.0.6 p150
+            GLuint _level_base = level_prime_base;
+            if (tex == immutTex)
+            {
+                _level_base = std::min(_level_base, MIPS - 1);
+            }
+            const GLuint level_base = _level_base;
+
+            for (GLuint _level_prime_max = (level_prime_base - 1); _level_prime_max < (MIPS + 2);
+                 _level_prime_max++)
+            {  // `q` in GLES
+                if (_level_prime_max < 0)
+                    continue;
+                if (_level_prime_max == (MIPS + 1))
+                {
+                    _level_prime_max = 10000;  // This is the default, after all!
+                }
+                const GLuint level_prime_max = _level_prime_max;
+
+                // ES 3.0.6 p150
+                GLuint _level_max = level_prime_max;
+                if (tex == immutTex)
+                {
+                    _level_max = std::min(std::max(level_base, level_prime_max), MIPS - 1);
+                }
+                const GLuint level_max = _level_max;
+
+                const GLuint p = std::floor((float)std::log2(SIZE)) + level_base;
+                const GLuint q = std::min(p, level_max);
+
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, level_prime_base);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, level_prime_max);
+
+                const bool mipComplete = (q <= MIPS - 1);
+
+                for (const GLenum minFilter : MIN_FILTERS)
+                {
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minFilter);
+
+                    for (const GLenum magFilter : MAG_FILTERS)
+                    {
+                        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, magFilter);
+
+                        for (GLuint dstMip = 0; dstMip < (MIPS + 1); dstMip++)
+                        {
+                            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                                   GL_TEXTURE_2D, tex, dstMip);
+
+                            // ES3.0 p213-214
+                            bool fbComplete = true;
+
+                            // * "The width and height of `image` are non-zero"
+                            fbComplete &= (0 <= dstMip && dstMip <= MIPS - 1);
+
+                            if (tex != immutTex)
+                            {  // "...does not name an immutable-format texture..."
+                                // * "...the value of [level] must be in the range `[level_base,
+                                // q]`"
+                                fbComplete &= (level_base <= dstMip && dstMip <= q);
+
+                                // * "...the value of [level] is not `level_base`, then the texture
+                                // must be mipmap complete"
+                                if (dstMip != level_base)
+                                {
+                                    fbComplete &= mipComplete;
+                                }
+                            }
+
+                            // -
+                            GLenum expectError  = 0;
+                            GLenum expectStatus = GL_FRAMEBUFFER_COMPLETE;
+                            if (!fbComplete)
+                            {
+                                expectStatus = GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
+                                expectError  = GL_INVALID_FRAMEBUFFER_OPERATION;
+                            }
+
+                            // -
+                            EXPECT_GLENUM_EQ(expectStatus,
+                                             glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+                            drawQuad(program, essl1_shaders::PositionAttrib(), 0.5, 1.0f, true);
+                            EXPECT_EQ(expectError, glGetError());
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -8564,6 +8901,9 @@ TEST_P(Texture2DIntegerProjectiveOffsetTestES3, NonZeroBaseLevel)
 // texture is output.
 TEST_P(Texture2DArrayIntegerTestES3, NonZeroBaseLevel)
 {
+    // Test fail: http://anglebug.com/5959
+    ANGLE_SKIP_TEST_IF(IsIntel() && IsOSX() && IsOpenGL());
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D_ARRAY, m2DArrayTexture);
     int width     = getWindowWidth();

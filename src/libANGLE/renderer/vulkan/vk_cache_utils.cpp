@@ -1843,12 +1843,45 @@ angle::Result GraphicsPipelineDesc::initializePipeline(
         gl::ComponentType programAttribType =
             gl::GetComponentTypeMask(programAttribsTypeMask, attribIndex);
 
+        // This forces stride to 0 when glVertexAttribute specifies a different type from the
+        // program's attribute type except when the type mismatch is a mismatched integer sign.
         if (attribType != programAttribType)
         {
-            // Override the format with a compatible one.
-            vkFormat = kMismatchedComponentTypeMap[programAttribType];
+            if (attribType == gl::ComponentType::Float ||
+                programAttribType == gl::ComponentType::Float)
+            {
+                // When dealing with float to int or unsigned int or vice versa, just override the
+                // format with a compatible one.
+                vkFormat = kMismatchedComponentTypeMap[programAttribType];
+            }
+            else
+            {
+                // When converting from an unsigned to a signed format or vice versa, attempt to
+                // match the bit width.
+                angle::FormatID convertedFormatID = gl::ConvertFormatSignedness(angleFormat);
+                const Format &convertedFormat =
+                    contextVk->getRenderer()->getFormat(convertedFormatID);
+                ASSERT(angleFormat.channelCount == convertedFormat.intendedFormat().channelCount);
+                ASSERT(angleFormat.redBits == convertedFormat.intendedFormat().redBits);
+                ASSERT(angleFormat.greenBits == convertedFormat.intendedFormat().greenBits);
+                ASSERT(angleFormat.blueBits == convertedFormat.intendedFormat().blueBits);
+                ASSERT(angleFormat.alphaBits == convertedFormat.intendedFormat().alphaBits);
 
-            bindingDesc.stride = 0;  // Prevent out-of-bounds accesses.
+                vkFormat = convertedFormat.actualBufferVkFormat(packedAttrib.compressed);
+            }
+
+            GLenum programAttributeType =
+                contextVk->getState().getProgramExecutable()->getProgramInputs()[attribIndex].type;
+            GLuint attribSize = gl::GetVertexFormatFromID(formatID).components;
+            GLuint shaderVarSize =
+                static_cast<GLuint>(gl::VariableColumnCount(programAttributeType));
+
+            ASSERT(contextVk->getNativeExtensions().relaxedVertexAttributeTypeANGLE);
+            if (programAttribType == gl::ComponentType::Float ||
+                attribType == gl::ComponentType::Float || attribSize != shaderVarSize)
+            {
+                bindingDesc.stride = 0;  // Prevent out-of-bounds accesses.
+            }
         }
 
         // The binding index could become more dynamic in ES 3.1.
@@ -3006,13 +3039,19 @@ UniformsAndXfbDescriptorDesc &UniformsAndXfbDescriptorDesc::operator=(
 
 size_t UniformsAndXfbDescriptorDesc::hash() const
 {
-    return angle::ComputeGenericHash(&mBufferSerials, sizeof(BufferSerial) * mBufferCount);
+    ASSERT(mBufferCount > 0);
+
+    return angle::ComputeGenericHash(&mBufferSerials, sizeof(mBufferSerials[0]) * mBufferCount) ^
+           angle::ComputeGenericHash(
+               &mXfbBufferOffsets,
+               sizeof(mXfbBufferOffsets[0]) * (mBufferCount - kDefaultUniformBufferCount));
 }
 
 void UniformsAndXfbDescriptorDesc::reset()
 {
     mBufferCount = 0;
-    memset(&mBufferSerials, 0, sizeof(BufferSerial) * kMaxBufferCount);
+    memset(&mBufferSerials, 0, sizeof(mBufferSerials));
+    memset(&mXfbBufferOffsets, 0, sizeof(mXfbBufferOffsets));
 }
 
 bool UniformsAndXfbDescriptorDesc::operator==(const UniformsAndXfbDescriptorDesc &other) const
@@ -3022,7 +3061,12 @@ bool UniformsAndXfbDescriptorDesc::operator==(const UniformsAndXfbDescriptorDesc
         return false;
     }
 
-    return memcmp(&mBufferSerials, &other.mBufferSerials, sizeof(BufferSerial) * mBufferCount) == 0;
+    ASSERT(mBufferCount > 0);
+
+    return memcmp(&mBufferSerials, &other.mBufferSerials,
+                  sizeof(mBufferSerials[0]) * mBufferCount) == 0 &&
+           memcmp(&mXfbBufferOffsets, &other.mXfbBufferOffsets,
+                  sizeof(mXfbBufferOffsets[0]) * (mBufferCount - kDefaultUniformBufferCount)) == 0;
 }
 
 // ShaderBuffersDescriptorDesc implementation.
@@ -3052,12 +3096,6 @@ void ShaderBuffersDescriptorDesc::reset()
 bool ShaderBuffersDescriptorDesc::operator==(const ShaderBuffersDescriptorDesc &other) const
 {
     return mPayload == other.mPayload;
-}
-
-void ShaderBuffersDescriptorDesc::append64BitValue(uint64_t value)
-{
-    mPayload.push_back(static_cast<uint32_t>(value & (angle::Bit<uint64_t>(32u) - 1u)));
-    mPayload.push_back(value >> 32);
 }
 
 // FramebufferDesc implementation.
@@ -3196,22 +3234,26 @@ SamplerDesc::SamplerDesc(const angle::FeaturesVk &featuresVk,
 
 void SamplerDesc::reset()
 {
-    mMipLodBias     = 0.0f;
-    mMaxAnisotropy  = 0.0f;
-    mMinLod         = 0.0f;
-    mMaxLod         = 0.0f;
-    mExternalFormat = 0;
-    mMagFilter      = 0;
-    mMinFilter      = 0;
-    mMipmapMode     = 0;
-    mAddressModeU   = 0;
-    mAddressModeV   = 0;
-    mAddressModeW   = 0;
-    mCompareEnabled = 0;
-    mCompareOp      = 0;
-    mReserved[0]    = 0;
-    mReserved[1]    = 0;
-    mReserved[2]    = 0;
+    mMipLodBias        = 0.0f;
+    mMaxAnisotropy     = 0.0f;
+    mMinLod            = 0.0f;
+    mMaxLod            = 0.0f;
+    mExternalFormat    = 0;
+    mMagFilter         = 0;
+    mMinFilter         = 0;
+    mMipmapMode        = 0;
+    mAddressModeU      = 0;
+    mAddressModeV      = 0;
+    mAddressModeW      = 0;
+    mCompareEnabled    = 0;
+    mCompareOp         = 0;
+    mPadding           = 0;
+    mBorderColorType   = 0;
+    mBorderColor.red   = 0.0f;
+    mBorderColor.green = 0.0f;
+    mBorderColor.blue  = 0.0f;
+    mBorderColor.alpha = 0.0f;
+    mReserved          = 0;
 }
 
 void SamplerDesc::update(const angle::FeaturesVk &featuresVk,
@@ -3279,9 +3321,13 @@ void SamplerDesc::update(const angle::FeaturesVk &featuresVk,
         mMaxLod = 0.25f;
     }
 
-    mReserved[0] = 0;
-    mReserved[1] = 0;
-    mReserved[2] = 0;
+    mPadding = 0;
+
+    mBorderColorType =
+        (samplerState.getBorderColor().type == angle::ColorGeneric::Type::Float) ? 0 : 1;
+    mBorderColor = samplerState.getBorderColor().colorF;
+
+    mReserved = 0;
 }
 
 angle::Result SamplerDesc::init(ContextVk *contextVk, Sampler *sampler) const
@@ -3352,6 +3398,30 @@ angle::Result SamplerDesc::init(ContextVk *contextVk, Sampler *sampler) const
         createInfo.minFilter = VK_FILTER_NEAREST;
     }
 
+    VkSamplerCustomBorderColorCreateInfoEXT customBorderColorInfo = {};
+    if (createInfo.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER ||
+        createInfo.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER ||
+        createInfo.addressModeW == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER)
+    {
+        ASSERT((contextVk->getRenderer()->getFeatures().supportsCustomBorderColorEXT.enabled));
+        customBorderColorInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT;
+
+        customBorderColorInfo.customBorderColor.float32[0] = mBorderColor.red;
+        customBorderColorInfo.customBorderColor.float32[1] = mBorderColor.green;
+        customBorderColorInfo.customBorderColor.float32[2] = mBorderColor.blue;
+        customBorderColorInfo.customBorderColor.float32[3] = mBorderColor.alpha;
+
+        if (mBorderColorType == static_cast<uint32_t>(angle::ColorGeneric::Type::Float))
+        {
+            createInfo.borderColor = VK_BORDER_COLOR_FLOAT_CUSTOM_EXT;
+        }
+        else
+        {
+            createInfo.borderColor = VK_BORDER_COLOR_INT_CUSTOM_EXT;
+        }
+
+        vk::AddToPNextChain(&createInfo, &customBorderColorInfo);
+    }
     ANGLE_VK_TRY(contextVk, sampler->init(contextVk->getDevice(), createInfo));
 
     return angle::Result::Continue;

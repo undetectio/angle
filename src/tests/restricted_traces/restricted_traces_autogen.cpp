@@ -32,6 +32,7 @@
 #include "coin_master/coin_master_capture_context1.h"
 #include "command_and_conquer_rivals/command_and_conquer_rivals_capture_context2.h"
 #include "disney_tsum_tsum/disney_tsum_tsum_capture_context3.h"
+#include "dr_driving/dr_driving_capture_context3.h"
 #include "dragon_ball_legends/dragon_ball_legends_capture_context1.h"
 #include "dragon_raja/dragon_raja_capture_context1.h"
 #include "efootball_pes_2021/efootball_pes_2021_capture_context1.h"
@@ -68,6 +69,7 @@
 #include "nba2k20_800/nba2k20_800_capture_context1.h"
 #include "one_punch_man/one_punch_man_capture_context1.h"
 #include "plants_vs_zombies_2/plants_vs_zombies_2_capture_context1.h"
+#include "pokemon_go/pokemon_go_capture_context2.h"
 #include "professional_baseball_spirits/professional_baseball_spirits_capture_context1.h"
 #include "pubg_mobile_lite/pubg_mobile_lite_capture_context1.h"
 #include "ragnarok_m_eternal_love/ragnarok_m_eternal_love_capture_context1.h"
@@ -79,12 +81,14 @@
 #include "romancing_saga/romancing_saga_capture_context1.h"
 #include "rope_hero_vice_town/rope_hero_vice_town_capture_context1.h"
 #include "saint_seiya_awakening/saint_seiya_awakening_capture_context1.h"
+#include "sakura_school_simulator/sakura_school_simulator_capture_context2.h"
 #include "shadow_fight_2/shadow_fight_2_capture_context1.h"
 #include "slingshot_test1/slingshot_test1_capture_context2.h"
 #include "slingshot_test2/slingshot_test2_capture_context2.h"
 #include "sniper_3d/sniper_3d_capture_context1.h"
 #include "standoff_2/standoff_2_capture_context1.h"
 #include "subway_surfers/subway_surfers_capture_context1.h"
+#include "summoners_war/summoners_war_capture_context2.h"
 #include "talking_tom_hero_dash/talking_tom_hero_dash_capture_context1.h"
 #include "temple_run_2/temple_run_2_capture_context1.h"
 #include "temple_run_300/temple_run_300_capture_context1.h"
@@ -197,6 +201,10 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
       disney_tsum_tsum::kReplayContextClientMinorVersion, disney_tsum_tsum::kReplayFrameStart,
       disney_tsum_tsum::kReplayFrameEnd, disney_tsum_tsum::kReplayDrawSurfaceWidth,
       disney_tsum_tsum::kReplayDrawSurfaceHeight, "disney_tsum_tsum"}},
+    {RestrictedTraceID::dr_driving,
+     {dr_driving::kReplayContextClientMajorVersion, dr_driving::kReplayContextClientMinorVersion,
+      dr_driving::kReplayFrameStart, dr_driving::kReplayFrameEnd,
+      dr_driving::kReplayDrawSurfaceWidth, dr_driving::kReplayDrawSurfaceHeight, "dr_driving"}},
     {RestrictedTraceID::dragon_ball_legends,
      {dragon_ball_legends::kReplayContextClientMajorVersion,
       dragon_ball_legends::kReplayContextClientMinorVersion, dragon_ball_legends::kReplayFrameStart,
@@ -367,6 +375,10 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
       plants_vs_zombies_2::kReplayContextClientMinorVersion, plants_vs_zombies_2::kReplayFrameStart,
       plants_vs_zombies_2::kReplayFrameEnd, plants_vs_zombies_2::kReplayDrawSurfaceWidth,
       plants_vs_zombies_2::kReplayDrawSurfaceHeight, "plants_vs_zombies_2"}},
+    {RestrictedTraceID::pokemon_go,
+     {pokemon_go::kReplayContextClientMajorVersion, pokemon_go::kReplayContextClientMinorVersion,
+      pokemon_go::kReplayFrameStart, pokemon_go::kReplayFrameEnd,
+      pokemon_go::kReplayDrawSurfaceWidth, pokemon_go::kReplayDrawSurfaceHeight, "pokemon_go"}},
     {RestrictedTraceID::professional_baseball_spirits,
      {professional_baseball_spirits::kReplayContextClientMajorVersion,
       professional_baseball_spirits::kReplayContextClientMinorVersion,
@@ -428,6 +440,12 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
       saint_seiya_awakening::kReplayFrameStart, saint_seiya_awakening::kReplayFrameEnd,
       saint_seiya_awakening::kReplayDrawSurfaceWidth,
       saint_seiya_awakening::kReplayDrawSurfaceHeight, "saint_seiya_awakening"}},
+    {RestrictedTraceID::sakura_school_simulator,
+     {sakura_school_simulator::kReplayContextClientMajorVersion,
+      sakura_school_simulator::kReplayContextClientMinorVersion,
+      sakura_school_simulator::kReplayFrameStart, sakura_school_simulator::kReplayFrameEnd,
+      sakura_school_simulator::kReplayDrawSurfaceWidth,
+      sakura_school_simulator::kReplayDrawSurfaceHeight, "sakura_school_simulator"}},
     {RestrictedTraceID::shadow_fight_2,
      {shadow_fight_2::kReplayContextClientMajorVersion,
       shadow_fight_2::kReplayContextClientMinorVersion, shadow_fight_2::kReplayFrameStart,
@@ -456,6 +474,11 @@ constexpr angle::PackedEnumMap<RestrictedTraceID, TraceInfo> kTraceInfos = {
       subway_surfers::kReplayContextClientMinorVersion, subway_surfers::kReplayFrameStart,
       subway_surfers::kReplayFrameEnd, subway_surfers::kReplayDrawSurfaceWidth,
       subway_surfers::kReplayDrawSurfaceHeight, "subway_surfers"}},
+    {RestrictedTraceID::summoners_war,
+     {summoners_war::kReplayContextClientMajorVersion,
+      summoners_war::kReplayContextClientMinorVersion, summoners_war::kReplayFrameStart,
+      summoners_war::kReplayFrameEnd, summoners_war::kReplayDrawSurfaceWidth,
+      summoners_war::kReplayDrawSurfaceHeight, "summoners_war"}},
     {RestrictedTraceID::talking_tom_hero_dash,
      {talking_tom_hero_dash::kReplayContextClientMajorVersion,
       talking_tom_hero_dash::kReplayContextClientMinorVersion,

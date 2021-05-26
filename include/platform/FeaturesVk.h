@@ -199,6 +199,13 @@ struct FeaturesVk : FeatureSetBase
                                       "VkDevice supports the VK_EXT_index_type_uint8 extension",
                                       &members, "http://anglebug.com/4405"};
 
+    // Whether the VkDevice supports the VK_EXT_custom_border_color extension
+    // http://anglebug.com/3577
+    Feature supportsCustomBorderColorEXT = {
+        "supports_custom_border_color", FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_EXT_custom_border_color extension", &members,
+        "http://anglebug.com/3577"};
+
     // Whether the VkDevice supports the VK_KHR_depth_stencil_resolve extension with the
     // independentResolveNone feature.
     // http://anglebug.com/4836
@@ -482,6 +489,12 @@ struct FeaturesVk : FeatureSetBase
                                       "Emulate 270-degree prerotation.", &members,
                                       "http://anglebug.com/4901"};
 
+    // Whether SPIR-V should be generated directly instead of through glslang.  Transitory feature
+    // until the work is complete.
+    Feature directSPIRVGeneration = {"directSPIRVGeneration", FeatureCategory::VulkanFeatures,
+                                     "Direct translation to SPIR-V.", &members,
+                                     "http://anglebug.com/4889"};
+
     // Whether we should use driver uniforms over specialization constants for some shader
     // modifications like yflip and rotation.
     Feature forceDriverUniformOverSpecConst = {
@@ -515,6 +528,12 @@ struct FeaturesVk : FeatureSetBase
         "forceFragmentShaderPrecisionHighpToMediump", FeatureCategory::VulkanWorkarounds,
         "Forces highp precision in fragment shader to mediump.", &members,
         "https://issuetracker.google.com/184850002"};
+
+    // Whether we should submit at each FBO boundary.
+    Feature preferSubmitAtFBOBoundary = {
+        "preferSubmitAtFBOBoundary", FeatureCategory::VulkanWorkarounds,
+        "Submit commands to driver at each FBO boundary for performance improvements.", &members,
+        "https://issuetracker.google.com/187425444"};
 };
 
 inline FeaturesVk::FeaturesVk()  = default;

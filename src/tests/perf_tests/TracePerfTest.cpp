@@ -895,7 +895,7 @@ TracePerfTest::TracePerfTest()
     // Adreno gives a driver error with empty/small draw calls. http://anglebug.com/5823
     if (param.testID == RestrictedTraceID::hill_climb_racing)
     {
-        if (IsAndroid() && IsPixel2() && param.driver == GLESDriverType::SystemEGL)
+        if (IsAndroid() && (IsPixel2() || IsPixel4()) && param.driver == GLESDriverType::SystemEGL)
         {
             mSkipTest = true;
         }
@@ -941,6 +941,29 @@ TracePerfTest::TracePerfTest()
     if (param.testID == RestrictedTraceID::ludo_king)
     {
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
+    }
+
+    // TODO: http://anglebug.com/5943 GL_INVALID_ENUM on Windows/Intel.
+    if (param.testID == RestrictedTraceID::summoners_war)
+    {
+        if (IsWindows() && IsIntel() && param.driver != GLESDriverType::AngleEGL)
+        {
+            mSkipTest = true;
+        }
+    }
+
+    if (param.testID == RestrictedTraceID::pokemon_go)
+    {
+        addExtensionPrerequisite("GL_EXT_texture_cube_map_array");
+        addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
+
+        // TODO: http://anglebug.com/5989 Intel Linux crashing on teardown
+        // TODO: http://anglebug.com/5994 Intel Windows timing out periodically
+        if ((IsLinux() || IsWindows()) && IsIntel() &&
+            param.getRenderer() == EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE)
+        {
+            mSkipTest = true;
+        }
     }
 
     // We already swap in TracePerfTest::drawBenchmark, no need to swap again in the harness.
@@ -1071,14 +1094,18 @@ void TracePerfTest::initializeBenchmark()
 
 void TracePerfTest::destroyBenchmark()
 {
-    glDeleteTextures(mMaxOffscreenBufferCount, mOffscreenTextures.data());
-    mOffscreenTextures.fill(0);
+    const auto &params = GetParam();
+    if (params.surfaceType == SurfaceType::Offscreen)
+    {
+        glDeleteTextures(mMaxOffscreenBufferCount, mOffscreenTextures.data());
+        mOffscreenTextures.fill(0);
 
-    glDeleteRenderbuffers(1, &mOffscreenDepthStencil);
-    mOffscreenDepthStencil = 0;
+        glDeleteRenderbuffers(1, &mOffscreenDepthStencil);
+        mOffscreenDepthStencil = 0;
 
-    glDeleteFramebuffers(mMaxOffscreenBufferCount, mOffscreenFramebuffers.data());
-    mOffscreenFramebuffers.fill(0);
+        glDeleteFramebuffers(mMaxOffscreenBufferCount, mOffscreenFramebuffers.data());
+        mOffscreenFramebuffers.fill(0);
+    }
 
     mTraceLibrary->finishReplay();
     mTraceLibrary.reset(nullptr);
@@ -1517,7 +1544,13 @@ void TracePerfTest::saveScreenshot(const std::string &screenshotName)
     uint32_t pixelCount = mTestParams.windowWidth * mTestParams.windowHeight;
     std::vector<uint8_t> pixelData(pixelCount * 4);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Only unbind the framebuffer on context versions where it's available.
+    const TraceInfo &traceInfo = GetTraceInfo(GetParam().testID);
+    if (traceInfo.contextClientMajorVersion > 1)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
     glReadPixels(0, 0, mTestParams.windowWidth, mTestParams.windowHeight, GL_RGBA, GL_UNSIGNED_BYTE,
                  pixelData.data());
 

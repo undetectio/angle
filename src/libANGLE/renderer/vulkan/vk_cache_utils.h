@@ -924,13 +924,19 @@ class SamplerDesc final
     // 3 bits for compare op. (8 possible values)
     uint16_t mCompareOp : 3;
 
-    // Border color and unnormalized coordinates implicitly set to contants.
+    uint16_t mPadding : 15;
 
-    // 48 extra bits reserved for future use.
-    uint16_t mReserved[3];
+    // Values from angle::ColorGeneric::Type. Float is 0 and others are 1.
+    uint16_t mBorderColorType : 1;
+
+    // 16*8 bits for BorderColor
+    angle::ColorF mBorderColor;
+
+    // 32 bits reserved for future use.
+    uint32_t mReserved;
 };
 
-static_assert(sizeof(SamplerDesc) == 32, "Unexpected SamplerDesc size");
+static_assert(sizeof(SamplerDesc) == 48, "Unexpected SamplerDesc size");
 
 // Disable warnings about struct padding.
 ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
@@ -1109,11 +1115,18 @@ class UniformsAndXfbDescriptorDesc
         mBufferSerials[kDefaultUniformBufferIndex] = bufferSerial;
         mBufferCount = std::max(mBufferCount, static_cast<uint32_t>(1));
     }
-    void updateTransformFeedbackBuffer(size_t xfbIndex, BufferSerial bufferSerial)
+    void updateTransformFeedbackBuffer(size_t xfbIndex,
+                                       BufferSerial bufferSerial,
+                                       VkDeviceSize bufferOffset)
     {
         uint32_t bufferIndex        = static_cast<uint32_t>(xfbIndex) + 1;
         mBufferSerials[bufferIndex] = bufferSerial;
-        mBufferCount                = std::max(mBufferCount, (bufferIndex + 1));
+
+        ASSERT(static_cast<uint64_t>(bufferOffset) <=
+               static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()));
+        mXfbBufferOffsets[xfbIndex] = static_cast<uint32_t>(bufferOffset);
+
+        mBufferCount = std::max(mBufferCount, (bufferIndex + 1));
     }
     size_t hash() const;
     void reset();
@@ -1124,8 +1137,11 @@ class UniformsAndXfbDescriptorDesc
     uint32_t mBufferCount;
     // The array index 0 is used for default uniform buffer
     static constexpr size_t kDefaultUniformBufferIndex = 0;
-    static constexpr size_t kMaxBufferCount = 1 + gl::IMPLEMENTATION_MAX_TRANSFORM_FEEDBACK_BUFFERS;
+    static constexpr size_t kDefaultUniformBufferCount = 1;
+    static constexpr size_t kMaxBufferCount =
+        kDefaultUniformBufferCount + gl::IMPLEMENTATION_MAX_TRANSFORM_FEEDBACK_BUFFERS;
     std::array<BufferSerial, kMaxBufferCount> mBufferSerials;
+    std::array<uint32_t, gl::IMPLEMENTATION_MAX_TRANSFORM_FEEDBACK_BUFFERS> mXfbBufferOffsets;
 };
 
 class ShaderBuffersDescriptorDesc
@@ -1147,8 +1163,6 @@ class ShaderBuffersDescriptorDesc
         mPayload.push_back(bufferSerial.getValue());
     }
     ANGLE_INLINE void append32BitValue(uint32_t value) { mPayload.push_back(value); }
-
-    void append64BitValue(uint64_t value);
 
   private:
     // After a preliminary minimum size, use heap memory.

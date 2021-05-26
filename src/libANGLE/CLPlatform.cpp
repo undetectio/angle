@@ -7,19 +7,261 @@
 
 #include "libANGLE/CLPlatform.h"
 
+#include <cstdint>
+#include <cstring>
+
 namespace cl
 {
 
-Platform::~Platform() = default;
-
-void Platform::CreatePlatform(const cl_icd_dispatch &dispatch, rx::CLPlatformImpl::Ptr &&impl)
+namespace
 {
-    GetList().emplace_back(new Platform(dispatch, std::move(impl)));
+
+bool IsDeviceTypeMatch(cl_device_type select, cl_device_type type)
+{
+    // The type 'cl_device_type' is a bitfield, so masking out the selected bits indicates
+    // if a given type is a match. A custom device is an exception, which only matches
+    // if it was explicitely selected, as defined here:
+    // https://www.khronos.org/registry/OpenCL/specs/3.0-unified/html/OpenCL_API.html#clGetDeviceIDs
+    return type == CL_DEVICE_TYPE_CUSTOM ? select == CL_DEVICE_TYPE_CUSTOM : (type & select) != 0u;
 }
 
-Platform::Platform(const cl_icd_dispatch &dispatch, rx::CLPlatformImpl::Ptr &&impl)
-    : _cl_platform_id(dispatch), mImpl(std::move(impl))
+Context::PropArray ParseContextProperties(const cl_context_properties *properties,
+                                          Platform *&platform,
+                                          bool &userSync)
+{
+    Context::PropArray propArray;
+    if (properties != nullptr)
+    {
+        const cl_context_properties *propIt = properties;
+        while (*propIt != 0)
+        {
+            switch (*propIt++)
+            {
+                case CL_CONTEXT_PLATFORM:
+                    platform = reinterpret_cast<Platform *>(*propIt++);
+                    break;
+                case CL_CONTEXT_INTEROP_USER_SYNC:
+                    userSync = *propIt++ != CL_FALSE;
+                    break;
+            }
+        }
+        // Include the trailing zero
+        ++propIt;
+        propArray.reserve(propIt - properties);
+        propArray.insert(propArray.cend(), properties, propIt);
+    }
+    if (platform == nullptr)
+    {
+        platform = Platform::GetDefault();
+    }
+    return propArray;
+}
+
+}  // namespace
+
+Platform::~Platform()
+{
+    removeRef();
+}
+
+cl_int Platform::getInfo(PlatformInfo name,
+                         size_t valueSize,
+                         void *value,
+                         size_t *valueSizeRet) const
+{
+    const void *copyValue = nullptr;
+    size_t copySize       = 0u;
+
+    switch (name)
+    {
+        case PlatformInfo::Profile:
+            copyValue = mInfo.mProfile.c_str();
+            copySize  = mInfo.mProfile.length() + 1u;
+            break;
+        case PlatformInfo::Version:
+            copyValue = mInfo.mVersionStr.c_str();
+            copySize  = mInfo.mVersionStr.length() + 1u;
+            break;
+        case PlatformInfo::NumericVersion:
+            copyValue = &mInfo.mVersion;
+            copySize  = sizeof(mInfo.mVersion);
+            break;
+        case PlatformInfo::Name:
+            copyValue = mInfo.mName.c_str();
+            copySize  = mInfo.mName.length() + 1u;
+            break;
+        case PlatformInfo::Vendor:
+            copyValue = kVendor;
+            copySize  = sizeof(kVendor);
+            break;
+        case PlatformInfo::Extensions:
+            copyValue = mInfo.mExtensions.c_str();
+            copySize  = mInfo.mExtensions.length() + 1u;
+            break;
+        case PlatformInfo::ExtensionsWithVersion:
+            copyValue = mInfo.mExtensionsWithVersion.data();
+            copySize  = mInfo.mExtensionsWithVersion.size() *
+                       sizeof(decltype(mInfo.mExtensionsWithVersion)::value_type);
+            break;
+        case PlatformInfo::HostTimerResolution:
+            copyValue = &mInfo.mHostTimerRes;
+            copySize  = sizeof(mInfo.mHostTimerRes);
+            break;
+        case PlatformInfo::IcdSuffix:
+            copyValue = kIcdSuffix;
+            copySize  = sizeof(kIcdSuffix);
+            break;
+        default:
+            return CL_INVALID_VALUE;
+    }
+
+    if (value != nullptr)
+    {
+        if (valueSize < copySize)
+        {
+            return CL_INVALID_VALUE;
+        }
+        if (copyValue != nullptr)
+        {
+            std::memcpy(value, copyValue, copySize);
+        }
+    }
+    if (valueSizeRet != nullptr)
+    {
+        *valueSizeRet = copySize;
+    }
+    return CL_SUCCESS;
+}
+
+cl_int Platform::getDeviceIDs(cl_device_type deviceType,
+                              cl_uint numEntries,
+                              cl_device_id *devices,
+                              cl_uint *numDevices) const
+{
+    cl_uint found = 0u;
+    for (const DevicePtr &device : mDevices)
+    {
+        if (IsDeviceTypeMatch(deviceType, device->getInfo().mType))
+        {
+            if (devices != nullptr && found < numEntries)
+            {
+                devices[found] = device.get();
+            }
+            ++found;
+        }
+    }
+    if (numDevices != nullptr)
+    {
+        *numDevices = found;
+    }
+    return found == 0u ? CL_DEVICE_NOT_FOUND : CL_SUCCESS;
+}
+
+void Platform::CreatePlatform(const cl_icd_dispatch &dispatch, const CreateImplFunc &createImplFunc)
+{
+    PlatformPtr platform(new Platform(dispatch, createImplFunc));
+    if (platform->mInfo.isValid() && !platform->mDevices.empty())
+    {
+        GetList().emplace_back(std::move(platform));
+    }
+}
+
+cl_int Platform::GetPlatformIDs(cl_uint num_entries,
+                                cl_platform_id *platforms,
+                                cl_uint *num_platforms)
+{
+    const PtrList &platformList = GetList();
+    if (num_platforms != nullptr)
+    {
+        *num_platforms = static_cast<cl_uint>(platformList.size());
+    }
+    if (platforms != nullptr)
+    {
+        cl_uint entry   = 0u;
+        auto platformIt = platformList.cbegin();
+        while (entry < num_entries && platformIt != platformList.cend())
+        {
+            platforms[entry++] = (*platformIt++).get();
+        }
+    }
+    return CL_SUCCESS;
+}
+
+cl_context Platform::CreateContext(const cl_context_properties *properties,
+                                   cl_uint numDevices,
+                                   const cl_device_id *devices,
+                                   ContextErrorCB notify,
+                                   void *userData,
+                                   cl_int *errcodeRet)
+{
+    Platform *platform           = nullptr;
+    bool userSync                = false;
+    Context::PropArray propArray = ParseContextProperties(properties, platform, userSync);
+    ASSERT(platform != nullptr);
+    DeviceRefList refDevices;
+    while (numDevices-- != 0u)
+    {
+        refDevices.emplace_back(static_cast<Device *>(*devices++));
+    }
+    return platform->createContext(
+        new Context(*platform, std::move(propArray), std::move(refDevices), notify, userData,
+                    userSync, errcodeRet),
+        errcodeRet);
+}
+
+cl_context Platform::CreateContextFromType(const cl_context_properties *properties,
+                                           cl_device_type deviceType,
+                                           ContextErrorCB notify,
+                                           void *userData,
+                                           cl_int *errcodeRet)
+{
+    Platform *platform           = nullptr;
+    bool userSync                = false;
+    Context::PropArray propArray = ParseContextProperties(properties, platform, userSync);
+    ASSERT(platform != nullptr);
+    return platform->createContext(new Context(*platform, std::move(propArray), deviceType, notify,
+                                               userData, userSync, errcodeRet),
+                                   errcodeRet);
+}
+
+Platform::Platform(const cl_icd_dispatch &dispatch, const CreateImplFunc &createImplFunc)
+    : _cl_platform_id(dispatch),
+      mImpl(createImplFunc(*this)),
+      mInfo(mImpl->createInfo()),
+      mDevices(mImpl->createDevices(*this))
 {}
+
+cl_context Platform::createContext(Context *context, cl_int *errcodeRet)
+{
+    mContexts.emplace_back(context);
+    if (!mContexts.back()->mImpl)
+    {
+        mContexts.back()->release();
+        return nullptr;
+    }
+    if (errcodeRet != nullptr)
+    {
+        *errcodeRet = CL_SUCCESS;
+    }
+    return mContexts.back().get();
+}
+
+void Platform::destroyContext(Context *context)
+{
+    auto contextIt = mContexts.cbegin();
+    while (contextIt != mContexts.cend() && contextIt->get() != context)
+    {
+        ++contextIt;
+    }
+    if (contextIt != mContexts.cend())
+    {
+        mContexts.erase(contextIt);
+    }
+    else
+    {
+        ERR() << "Context not found";
+    }
+}
 
 constexpr char Platform::kVendor[];
 constexpr char Platform::kIcdSuffix[];

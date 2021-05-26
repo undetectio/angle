@@ -9,13 +9,13 @@
 #ifndef LIBANGLE_CLPLATFORM_H_
 #define LIBANGLE_CLPLATFORM_H_
 
-#include "libANGLE/CLObject.h"
+#include "libANGLE/CLContext.h"
+#include "libANGLE/CLDevice.h"
 #include "libANGLE/renderer/CLPlatformImpl.h"
 
 #include "anglebase/no_destructor.h"
 
-#include <algorithm>
-#include <string>
+#include <functional>
 
 namespace cl
 {
@@ -23,97 +23,173 @@ namespace cl
 class Platform final : public _cl_platform_id, public Object
 {
   public:
-    using Ptr  = std::unique_ptr<Platform>;
-    using List = std::vector<Ptr>;
+    using PtrList        = std::list<PlatformPtr>;
+    using CreateImplFunc = std::function<rx::CLPlatformImpl::Ptr(const cl::Platform &)>;
 
-    ~Platform();
+    ~Platform() override;
 
-    const char *getProfile() const;
-    const char *getVersionString() const;
-    cl_version getVersion() const;
-    const char *getName() const;
-    const char *getExtensions() const;
-    const rx::CLPlatformImpl::ExtensionList &getExtensionsWithVersion() const;
-    cl_ulong getHostTimerResolution() const;
+    const rx::CLPlatformImpl::Info &getInfo() const;
+    bool isVersionOrNewer(cl_uint major, cl_uint minor) const;
+    bool hasDevice(const _cl_device_id *device) const;
+    const DevicePtrList &getDevices() const;
 
-    static void CreatePlatform(const cl_icd_dispatch &dispatch, rx::CLPlatformImpl::Ptr &&impl);
-    static const List &GetPlatforms();
-    static bool IsValid(const Platform *platform);
+    bool hasContext(const _cl_context *context) const;
+    bool hasCommandQueue(const _cl_command_queue *commandQueue) const;
+    bool hasMemory(const _cl_mem *memory) const;
+    bool hasSampler(const _cl_sampler *sampler) const;
+    bool hasProgram(const _cl_program *program) const;
+
+    cl_int getInfo(PlatformInfo name, size_t valueSize, void *value, size_t *valueSizeRet) const;
+
+    cl_int getDeviceIDs(cl_device_type deviceType,
+                        cl_uint numEntries,
+                        cl_device_id *devices,
+                        cl_uint *numDevices) const;
+
+    static void CreatePlatform(const cl_icd_dispatch &dispatch,
+                               const CreateImplFunc &createImplFunc);
+
+    static cl_int GetPlatformIDs(cl_uint num_entries,
+                                 cl_platform_id *platforms,
+                                 cl_uint *num_platforms);
+
+    static cl_context CreateContext(const cl_context_properties *properties,
+                                    cl_uint numDevices,
+                                    const cl_device_id *devices,
+                                    ContextErrorCB notify,
+                                    void *userData,
+                                    cl_int *errcodeRet);
+
+    static cl_context CreateContextFromType(const cl_context_properties *properties,
+                                            cl_device_type deviceType,
+                                            ContextErrorCB notify,
+                                            void *userData,
+                                            cl_int *errcodeRet);
+
+    static const PtrList &GetPlatforms();
+    static Platform *GetDefault();
+    static Platform *CastOrDefault(cl_platform_id platform);
+    static bool IsValid(const _cl_platform_id *platform);
+    static bool IsValidOrDefault(const _cl_platform_id *platform);
+
     static constexpr const char *GetVendor();
-    static constexpr const char *GetIcdSuffix();
 
   private:
-    Platform(const cl_icd_dispatch &dispatch, rx::CLPlatformImpl::Ptr &&impl);
+    Platform(const cl_icd_dispatch &dispatch, const CreateImplFunc &createImplFunc);
 
-    static List &GetList();
+    cl_context createContext(Context *context, cl_int *errcodeRet);
+    void destroyContext(Context *context);
+
+    static PtrList &GetList();
 
     const rx::CLPlatformImpl::Ptr mImpl;
+    const rx::CLPlatformImpl::Info mInfo;
+    const DevicePtrList mDevices;
+
+    Context::PtrList mContexts;
 
     static constexpr char kVendor[]    = "ANGLE";
     static constexpr char kIcdSuffix[] = "ANGLE";
+
+    friend class Context;
 };
 
-inline const char *Platform::getProfile() const
+inline const rx::CLPlatformImpl::Info &Platform::getInfo() const
 {
-    return mImpl->getInfo().mProfile.c_str();
+    return mInfo;
 }
 
-inline const char *Platform::getVersionString() const
+inline bool Platform::isVersionOrNewer(cl_uint major, cl_uint minor) const
 {
-    return mImpl->getInfo().mVersionStr.c_str();
+    return mInfo.mVersion >= CL_MAKE_VERSION(major, minor, 0u);
 }
 
-inline cl_version Platform::getVersion() const
+inline bool Platform::hasDevice(const _cl_device_id *device) const
 {
-    return mImpl->getInfo().mVersion;
+    return std::find_if(mDevices.cbegin(), mDevices.cend(), [=](const DevicePtr &ptr) {
+               return ptr.get() == device || ptr->hasSubDevice(device);
+           }) != mDevices.cend();
 }
 
-inline const char *Platform::getName() const
+inline const DevicePtrList &Platform::getDevices() const
 {
-    return mImpl->getInfo().mName.c_str();
+    return mDevices;
 }
 
-inline const char *Platform::getExtensions() const
+inline bool Platform::hasContext(const _cl_context *context) const
 {
-    return mImpl->getInfo().mExtensions.c_str();
+    return std::find_if(mContexts.cbegin(), mContexts.cend(), [=](const ContextPtr &ptr) {
+               return ptr.get() == context;
+           }) != mContexts.cend();
 }
 
-inline const rx::CLPlatformImpl::ExtensionList &Platform::getExtensionsWithVersion() const
+inline bool Platform::hasCommandQueue(const _cl_command_queue *commandQueue) const
 {
-    return mImpl->getInfo().mExtensionList;
+    return std::find_if(mContexts.cbegin(), mContexts.cend(), [=](const ContextPtr &ptr) {
+               return ptr->hasCommandQueue(commandQueue);
+           }) != mContexts.cend();
 }
 
-inline cl_ulong Platform::getHostTimerResolution() const
+inline bool Platform::hasMemory(const _cl_mem *memory) const
 {
-    return mImpl->getInfo().mHostTimerRes;
+    return std::find_if(mContexts.cbegin(), mContexts.cend(), [=](const ContextPtr &ptr) {
+               return ptr->hasMemory(memory);
+           }) != mContexts.cend();
 }
 
-inline Platform::List &Platform::GetList()
+inline bool Platform::hasSampler(const _cl_sampler *sampler) const
 {
-    static angle::base::NoDestructor<List> sList;
+    return std::find_if(mContexts.cbegin(), mContexts.cend(), [=](const ContextPtr &ptr) {
+               return ptr->hasSampler(sampler);
+           }) != mContexts.cend();
+}
+
+inline bool Platform::hasProgram(const _cl_program *program) const
+{
+    return std::find_if(mContexts.cbegin(), mContexts.cend(), [=](const ContextPtr &ptr) {
+               return ptr->hasProgram(program);
+           }) != mContexts.cend();
+}
+
+inline Platform::PtrList &Platform::GetList()
+{
+    static angle::base::NoDestructor<PtrList> sList;
     return *sList;
 }
 
-inline const Platform::List &Platform::GetPlatforms()
+inline const Platform::PtrList &Platform::GetPlatforms()
 {
     return GetList();
 }
 
-inline bool Platform::IsValid(const Platform *platform)
+inline Platform *Platform::GetDefault()
 {
-    const List &platforms = GetPlatforms();
-    return std::find_if(platforms.cbegin(), platforms.cend(),
-                        [=](const Ptr &ptr) { return ptr.get() == platform; }) != platforms.cend();
+    return GetList().empty() ? nullptr : GetList().front().get();
+}
+
+inline Platform *Platform::CastOrDefault(cl_platform_id platform)
+{
+    return platform != nullptr ? static_cast<Platform *>(platform) : GetDefault();
+}
+
+inline bool Platform::IsValid(const _cl_platform_id *platform)
+{
+    const PtrList &platforms = GetPlatforms();
+    return std::find_if(platforms.cbegin(), platforms.cend(), [=](const PlatformPtr &ptr) {
+               return ptr.get() == platform;
+           }) != platforms.cend();
+}
+
+// Our CL implementation defines that a nullptr value chooses the platform that we provide as
+// default, so this function returns true for a nullptr value if a default platform exists.
+inline bool Platform::IsValidOrDefault(const _cl_platform_id *platform)
+{
+    return platform != nullptr ? IsValid(platform) : GetDefault() != nullptr;
 }
 
 constexpr const char *Platform::GetVendor()
 {
     return kVendor;
-}
-
-constexpr const char *Platform::GetIcdSuffix()
-{
-    return kIcdSuffix;
 }
 
 }  // namespace cl
