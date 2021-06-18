@@ -45,6 +45,7 @@ jobs:
           export PATH=$(pwd)/depot_tools:$PATH
           python scripts/bootstrap.py
           gclient sync
+          [[ "$OSTYPE" == "linux-gnu"* && "${{ matrix.arch }}" == "arm64" ]] && ./build/linux/sysroot_scripts/install-sysroot.py --arch=arm64
           # See: https://chromium.googlesource.com/chromium/src/+/master/build/install-build-deps.sh
           [[ "$OSTYPE" == "linux-gnu"* ]] && sudo apt-get -y remove php-common && ./build/install-build-deps.sh --no-syms --no-arm --no-prompt # Run on Linux only
           gn gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"${{ matrix.arch }}\" is_component_build=false angle_enable_swiftshader=false" # is_official_build=true chrome_pgo_phase=0 is_cfi=false
