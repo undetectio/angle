@@ -10,9 +10,12 @@ jobs:
         matrix:
           os:
           - ubuntu-latest
-          - windows-latest
-          - macOS-latest
-    name: Build on ${{ matrix.os }}
+          #- windows-latest
+          #- macOS-latest
+          arch:
+          - x86
+          - arm64
+    name: Build on ${{ matrix.os }} / ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Maximize build space
@@ -44,7 +47,7 @@ jobs:
           gclient sync
           # See: https://chromium.googlesource.com/chromium/src/+/master/build/install-build-deps.sh
           [[ "$OSTYPE" == "linux-gnu"* ]] && sudo apt-get -y remove php-common && ./build/install-build-deps.sh --no-syms --no-arm --no-prompt # Run on Linux only
-          gn gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"x64\" is_component_build=false angle_enable_swiftshader=false" # is_official_build=true chrome_pgo_phase=0 is_cfi=false
+          gn gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"${{ matrix.arch }}\" is_component_build=false angle_enable_swiftshader=false" # is_official_build=true chrome_pgo_phase=0 is_cfi=false
           autoninja -C out/Release
       -
         name: Build Windows
@@ -57,14 +60,14 @@ jobs:
           export PATH=$(pwd)/depot_tools:$PATH
           python scripts/bootstrap.py
           gclient.bat sync
-          gn.bat gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"x64\" is_component_build=false angle_enable_swiftshader=false" # is_official_build=true chrome_pgo_phase=0 is_cfi=false" target_os=\"winuwp\"
+          gn.bat gen out/Release --args="is_debug=false dcheck_always_on=false target_cpu=\"${{ matrix.arch }}\" is_component_build=false angle_enable_swiftshader=false" # is_official_build=true chrome_pgo_phase=0 is_cfi=false" target_os=\"winuwp\"
           autoninja.bat -C out/Release
       -
         name: Upload artifact on Linux
         if: startsWith(matrix.os, 'ubuntu')
         uses: actions/upload-artifact@v2
         with:
-          name: libs-linux
+          name: libs-linux-${{ matrix.arch }}
           path: |
             out/Release/libEGL.so
             out/Release/libGLESv2.so
@@ -73,7 +76,7 @@ jobs:
         if: startsWith(matrix.os, 'macOS')
         uses: actions/upload-artifact@v2
         with:
-          name: libs-macos
+          name: libs-macos-${{ matrix.arch }}
           path: |
             out/Release/libEGL.dylib
             out/Release/libGLESv2.dylib
@@ -82,7 +85,7 @@ jobs:
         if: startsWith(matrix.os, 'windows')
         uses: actions/upload-artifact@v2
         with:
-          name: libs-windows
+          name: libs-windows-${{ matrix.arch }}
           path: |
             out/Release/libEGL.dll
             out/Release/libGLESv2.dll
