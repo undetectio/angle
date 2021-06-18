@@ -440,6 +440,7 @@ ContextVk::ContextVk(const gl::State &state, gl::ErrorSet *errorSet, RendererVk 
       mEmulateSeamfulCubeMapSampling(false),
       mOutsideRenderPassCommands(nullptr),
       mRenderPassCommands(nullptr),
+      mQueryEventType(GraphicsEventCmdBuf::NotInQueryCmd),
       mGpuEventsEnabled(false),
       mEGLSyncObjectPendingFlush(false),
       mHasDeferredFlush(false),
@@ -1293,9 +1294,9 @@ angle::Result ContextVk::handleDirtyEventLogImpl(vk::CommandBuffer *commandBuffe
     // to call the vkCmd*DebugUtilsLabelEXT functions in order to communicate to debuggers
     // (e.g. AGI) the OpenGL ES commands that the application uses.
 
-    // Exit early if no OpenGL ES commands have been logged or if calling the
-    // vkCmd*DebugUtilsLabelEXT functions is not enabled.
-    if (mEventLog.empty() || !mRenderer->angleDebuggerMode())
+    // Exit early if no OpenGL ES commands have been logged, or if no command buffer (for a no-op
+    // draw), or if calling the vkCmd*DebugUtilsLabelEXT functions is not enabled.
+    if (mEventLog.empty() || commandBuffer == nullptr || !mRenderer->angleDebuggerMode())
     {
         return angle::Result::Continue;
     }
@@ -1569,19 +1570,25 @@ ANGLE_INLINE angle::Result ContextVk::handleDirtyTexturesImpl(
                 {
                     if (image.hasRenderPassUsageFlag(vk::RenderPassUsage::ReadOnlyAttachment))
                     {
-                        textureLayout = vk::ImageLayout::DepthStencilReadOnly;
+                        if (firstShader == gl::ShaderType::Fragment)
+                        {
+                            ASSERT(remainingShaderBits.none() && lastShader == firstShader);
+                            textureLayout = vk::ImageLayout::DSAttachmentReadAndFragmentShaderRead;
+                        }
+                        else
+                        {
+                            textureLayout = vk::ImageLayout::DSAttachmentReadAndAllShadersRead;
+                        }
                     }
                     else
                     {
                         if (firstShader == gl::ShaderType::Fragment)
                         {
-                            textureLayout =
-                                vk::ImageLayout::DepthStencilAttachmentAndFragmentShaderRead;
+                            textureLayout = vk::ImageLayout::DSAttachmentWriteAndFragmentShaderRead;
                         }
                         else
                         {
-                            textureLayout =
-                                vk::ImageLayout::DepthStencilAttachmentAndAllShadersRead;
+                            textureLayout = vk::ImageLayout::DSAttachmentWriteAndAllShadersRead;
                         }
                     }
                 }
@@ -1604,7 +1611,15 @@ ANGLE_INLINE angle::Result ContextVk::handleDirtyTexturesImpl(
                 // split a RenderPass to transition a depth texture from shader-read to read-only.
                 // This improves performance in Manhattan. Future optimizations are likely possible
                 // here including using specialized barriers without breaking the RenderPass.
-                textureLayout = vk::ImageLayout::DepthStencilReadOnly;
+                if (firstShader == gl::ShaderType::Fragment)
+                {
+                    ASSERT(remainingShaderBits.none() && lastShader == firstShader);
+                    textureLayout = vk::ImageLayout::DSAttachmentReadAndFragmentShaderRead;
+                }
+                else
+                {
+                    textureLayout = vk::ImageLayout::DSAttachmentReadAndAllShadersRead;
+                }
             }
             else
             {
@@ -3006,27 +3021,84 @@ void ContextVk::logEvent(const char *eventString)
     mComputeDirtyBits.set(DIRTY_BIT_EVENT_LOG);
 }
 
-void ContextVk::endEventLog(angle::EntryPoint entryPoint)
+void ContextVk::endEventLog(angle::EntryPoint entryPoint, PipelineType pipelineType)
 {
     if (!mRenderer->angleDebuggerMode())
     {
         return;
     }
 
-    ASSERT(mRenderPassCommands);
-    mRenderPassCommands->getCommandBuffer().endDebugUtilsLabelEXT();
+    if (pipelineType == PipelineType::Graphics)
+    {
+        ASSERT(mRenderPassCommands);
+        mRenderPassCommands->getCommandBuffer().endDebugUtilsLabelEXT();
+    }
+    else
+    {
+        ASSERT(pipelineType == PipelineType::Compute);
+        ASSERT(mOutsideRenderPassCommands);
+        mOutsideRenderPassCommands->getCommandBuffer().endDebugUtilsLabelEXT();
+    }
+}
+void ContextVk::endEventLogForClearOrQuery()
+{
+    ASSERT(mQueryEventType == GraphicsEventCmdBuf::InOutsideCmdBufQueryCmd ||
+           mQueryEventType == GraphicsEventCmdBuf::InRenderPassCmdBufQueryCmd);
+    if (!mRenderer->angleDebuggerMode())
+    {
+        return;
+    }
+
+    vk::CommandBuffer *commandBuffer = nullptr;
+    switch (mQueryEventType)
+    {
+        case GraphicsEventCmdBuf::InOutsideCmdBufQueryCmd:
+            ASSERT(mOutsideRenderPassCommands);
+            commandBuffer = &mOutsideRenderPassCommands->getCommandBuffer();
+            break;
+        case GraphicsEventCmdBuf::InRenderPassCmdBufQueryCmd:
+            ASSERT(mRenderPassCommands);
+            commandBuffer = &mRenderPassCommands->getCommandBuffer();
+            break;
+        default:
+            UNREACHABLE();
+    }
+    commandBuffer->endDebugUtilsLabelEXT();
+
+    mQueryEventType = GraphicsEventCmdBuf::NotInQueryCmd;
 }
 
 angle::Result ContextVk::handleNoopDrawEvent()
 {
+    // Even though this draw call is being no-op'd, we still must handle the dirty event log
+    return handleDirtyEventLogImpl(mRenderPassCommandBuffer);
+}
+
+angle::Result ContextVk::handleGraphicsEventLog(GraphicsEventCmdBuf queryEventType)
+{
+    ASSERT(mQueryEventType == GraphicsEventCmdBuf::NotInQueryCmd);
     if (!mRenderer->angleDebuggerMode())
     {
         return angle::Result::Continue;
     }
 
-    ASSERT(mRenderPassCommandBuffer);
-    // Even though this draw call is being no-op'd, we still must handle the dirty event log
-    return handleDirtyEventLogImpl(mRenderPassCommandBuffer);
+    mQueryEventType = queryEventType;
+
+    vk::CommandBuffer *commandBuffer = nullptr;
+    switch (mQueryEventType)
+    {
+        case GraphicsEventCmdBuf::InOutsideCmdBufQueryCmd:
+            ASSERT(mOutsideRenderPassCommands);
+            commandBuffer = &mOutsideRenderPassCommands->getCommandBuffer();
+            break;
+        case GraphicsEventCmdBuf::InRenderPassCmdBufQueryCmd:
+            ASSERT(mRenderPassCommands);
+            commandBuffer = &mRenderPassCommands->getCommandBuffer();
+            break;
+        default:
+            UNREACHABLE();
+    }
+    return handleDirtyEventLogImpl(commandBuffer);
 }
 
 bool ContextVk::isViewportFlipEnabledForDrawFBO() const
@@ -4812,7 +4884,7 @@ angle::Result ContextVk::updateActiveTextures(const gl::Context *context)
     const gl::ActiveTextureMask &activeTextures    = executable->getActiveSamplersMask();
     const gl::ActiveTextureTypeArray &textureTypes = executable->getActiveSamplerTypes();
 
-    bool haveImmutableSampler = false;
+    bool recreatePipelineLayout = false;
     for (size_t textureUnit : activeTextures)
     {
         gl::Texture *texture        = textures[textureUnit];
@@ -4890,16 +4962,13 @@ angle::Result ContextVk::updateActiveTextures(const gl::Context *context)
             textureVk->getImageViewSubresourceSerial(samplerState);
         mActiveTexturesDesc.update(textureUnit, imageViewSerial, samplerHelper.getSamplerSerial());
 
-        if (textureVk->getImage().hasImmutableSampler())
-        {
-            haveImmutableSampler = true;
-        }
+        recreatePipelineLayout =
+            textureVk->getAndResetImmutableSamplerDirtyState() || recreatePipelineLayout;
     }
 
-    if (haveImmutableSampler)
+    // Recreate the pipeline layout, if necessary.
+    if (recreatePipelineLayout)
     {
-        // TODO(http://anglebug.com/5033): This will recreate the descriptor pools each time, which
-        // will likely affect performance negatively.
         ANGLE_TRY(mExecutable->createPipelineLayout(context, &mActiveTextures));
 
         // The default uniforms descriptor set was reset during createPipelineLayout(), so mark them
@@ -5514,7 +5583,14 @@ angle::Result ContextVk::flushDirtyGraphicsRenderPass(DirtyBits::Iterator *dirty
 
     ANGLE_TRY(flushCommandsAndEndRenderPassImpl());
 
+    // Set dirty bits that need processing on new render pass on the dirty bits iterator that's
+    // being processed right now.
     dirtyBitsIterator->setLaterBits(mNewGraphicsCommandBufferDirtyBits & dirtyBitMask);
+
+    // Additionally, make sure any dirty bits not included in the mask are left for future
+    // processing.  Note that |dirtyBitMask| is removed from |mNewGraphicsCommandBufferDirtyBits|
+    // after dirty bits are iterated, so there's no need to mask them out.
+    mGraphicsDirtyBits |= mNewGraphicsCommandBufferDirtyBits;
 
     // Restart at subpass 0.
     mGraphicsPipelineDesc->resetSubpass(&mGraphicsPipelineTransition);
@@ -5623,6 +5699,9 @@ angle::Result ContextVk::flushOutsideRenderPassCommands()
 
 angle::Result ContextVk::beginRenderPassQuery(QueryVk *queryVk)
 {
+    // Emit debug-util markers before calling the query command.
+    ANGLE_TRY(handleGraphicsEventLog(rx::GraphicsEventCmdBuf::InRenderPassCmdBufQueryCmd));
+
     // To avoid complexity, we always start and end these queries inside the render pass.  If the
     // render pass has not yet started, the query is deferred until it does.
     if (mRenderPassCommandBuffer)
@@ -5638,8 +5717,11 @@ angle::Result ContextVk::beginRenderPassQuery(QueryVk *queryVk)
     return angle::Result::Continue;
 }
 
-void ContextVk::endRenderPassQuery(QueryVk *queryVk)
+angle::Result ContextVk::endRenderPassQuery(QueryVk *queryVk)
 {
+    // Emit debug-util markers before calling the query command.
+    ANGLE_TRY(handleGraphicsEventLog(rx::GraphicsEventCmdBuf::InRenderPassCmdBufQueryCmd));
+
     if (mRenderPassCommandBuffer)
     {
         queryVk->getQueryHelper()->endRenderPassQuery(this);
@@ -5649,6 +5731,8 @@ void ContextVk::endRenderPassQuery(QueryVk *queryVk)
 
     ASSERT(mActiveRenderPassQueries[type] == queryVk);
     mActiveRenderPassQueries[type] = nullptr;
+
+    return angle::Result::Continue;
 }
 
 void ContextVk::pauseRenderPassQueriesIfActive()

@@ -1347,9 +1347,11 @@ enum class ImageLayout
     ColorAttachment,
     ColorAttachmentAndFragmentShaderRead,
     ColorAttachmentAndAllShadersRead,
-    DepthStencilAttachmentAndFragmentShaderRead,
-    DepthStencilAttachmentAndAllShadersRead,
-    DepthStencilReadOnly,
+    DSAttachmentWriteAndFragmentShaderRead,
+    DSAttachmentWriteAndAllShadersRead,
+    DSAttachmentReadAndFragmentShaderRead,
+    DSAttachmentReadAndAllShadersRead,
+    DepthStencilAttachmentReadOnly,
     DepthStencilAttachment,
     DepthStencilResolveAttachment,
     Present,
@@ -1869,7 +1871,7 @@ class ImageHelper final : public Resource, public angle::Subject
                  uint32_t layerStart,
                  uint32_t layerCount,
                  VkImageAspectFlags aspectFlags);
-    bool hasImmutableSampler() { return mExternalFormat != 0; }
+    bool hasImmutableSampler() const { return mExternalFormat != 0; }
     uint64_t getExternalFormat() const { return mExternalFormat; }
 
     // Used by framebuffer and render pass functions to decide loadOps and invalidate/un-invalidate

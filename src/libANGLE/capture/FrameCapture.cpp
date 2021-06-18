@@ -1071,6 +1071,24 @@ void WriteCppReplay(bool compression,
         out << "extern \"C\" {\n";
     }
 
+    if (frameIndex == 1)
+    {
+        std::stringstream setupCallStream;
+
+        setupCallStream << "void " << FmtSetupFunction(kNoPartId) << "\n";
+        setupCallStream << "{\n";
+
+        size_t maxClientArraySize = MaxClientArraySize(clientArraySizes);
+
+        WriteInitReplayCall(compression, setupCallStream, context->id(), captureLabel,
+                            maxClientArraySize, readBufferSize);
+        WriteCppReplayFunctionWithParts(context, ReplayFunc::Setup, &dataTracker, frameIndex,
+                                        binaryData, setupCalls, header, setupCallStream, out);
+
+        out << setupCallStream.str();
+        out << "}\n";
+    }
+
     if (frameIndex == frameCount)
     {
         // Emit code to reset back to starting state
@@ -3403,8 +3421,9 @@ bool SkipCall(EntryPoint entryPoint)
             return true;
 
         case EntryPoint::GLGetActiveUniform:
-            // Skip this call because:
-            // - We don't use the return values from this call.
+        case EntryPoint::GLGetActiveUniformsiv:
+            // Skip these calls because:
+            // - We don't use the return values.
             // - Active uniform counts can vary between platforms due to cross stage optimizations
             //   and asking about uniforms above GL_ACTIVE_UNIFORMS triggers errors.
             return true;
@@ -4589,7 +4608,7 @@ void FrameCapture::onEndFrame(const gl::Context *context)
     }
 
     // Note that we currently capture before the start frame to collect shader and program sources.
-    if (isCaptureActive())
+    if (!mFrameCalls.empty() && isCaptureActive())
     {
         if (mIsFirstFrame)
         {
@@ -4889,8 +4908,6 @@ void FrameCapture::writeCppReplayIndexFiles(const gl::Context *context, bool wri
     const egl::Config *config           = context->getConfig();
     const egl::AttributeMap &attributes = context->getDisplay()->getAttributeMap();
 
-    DataTracker dataTracker;
-
     unsigned frameCount = getFrameCount();
 
     std::stringstream header;
@@ -4978,22 +4995,6 @@ void FrameCapture::writeCppReplayIndexFiles(const gl::Context *context, bool wri
     {
         source << "using namespace " << mCaptureLabel << ";\n";
         source << "\n";
-    }
-
-    {
-        std::stringstream setupCallStream;
-
-        setupCallStream << "void " << FmtSetupFunction(kNoPartId) << "\n";
-        setupCallStream << "{\n";
-
-        WriteInitReplayCall(mCompression, setupCallStream, context->id(), mCaptureLabel,
-                            MaxClientArraySize(mClientArraySizes), mReadBufferSize);
-
-        WriteCppReplayFunctionWithParts(context, ReplayFunc::Setup, &dataTracker, mFrameIndex,
-                                        &mBinaryData, mSetupCalls, header, setupCallStream, source);
-
-        source << setupCallStream.str();
-        source << "}\n";
     }
 
     source << "extern \"C\" {\n";
@@ -5574,4 +5575,13 @@ void WriteParamValueReplay<ParamType::TUniformBlockIndex>(std::ostream &os,
     os << "gUniformBlockIndexes[gShaderProgramMap[" << programID.value << "]][" << value.value
        << "]";
 }
+
+template <>
+void WriteParamValueReplay<ParamType::TGLeglImageOES>(std::ostream &os,
+                                                      const CallCapture &call,
+                                                      GLeglImageOES value)
+{
+    os << "reinterpret_cast<EGLImageKHR>(" << value << ")";
+}
+
 }  // namespace angle
